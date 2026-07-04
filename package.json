@@ -1,0 +1,24 @@
+{
+  "name": "latteart",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Open-source, local-first, provider-agnostic AI image studio with real non-destructive layers.",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vp run -r dev",
+    "dev:web": "vp run @latteart/web#dev",
+    "dev:server": "vp run @latteart/server#dev",
+    "build": "vp run -r build",
+    "check": "vp check",
+    "test": "vp run -r test",
+    "ready": "vp check && vp run -r build"
+  },
+  "devDependencies": {
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "packageManager": "pnpm@11.9.0"
+}
