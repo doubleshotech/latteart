@@ -108,7 +108,15 @@ export type ProgressEvent =
 export interface ProviderContext {
   apiKey?: string;
   baseUrl?: string;
-  onProgress?: (p: ProgressEvent) => void;
+  /**
+   * Report incremental progress (pct 0..100). The backend stamps the job id and
+   * streams a {@link ProgressEvent} to the client, so providers stay
+   * job-agnostic — a local backend forwards diffusion steps; a cloud one fakes.
+   */
+  onProgress?: (
+    pct: number,
+    extra?: { step?: number; totalSteps?: number; previewDataUrl?: string },
+  ) => void;
 }
 
 /**
@@ -123,16 +131,8 @@ export interface ImageProvider {
   /** Cloud providers need a BYOK key; local ones need a reachable base URL. */
   requiresKey: boolean;
   listModels(): Promise<ModelInfo[]>;
-  generate(
-    req: GenerateRequest,
-    ctx: ProviderContext,
-    signal?: AbortSignal,
-  ): Promise<GenResult>;
-  edit?(
-    req: EditRequest,
-    ctx: ProviderContext,
-    signal?: AbortSignal,
-  ): Promise<GenResult>;
+  generate(req: GenerateRequest, ctx: ProviderContext, signal?: AbortSignal): Promise<GenResult>;
+  edit?(req: EditRequest, ctx: ProviderContext, signal?: AbortSignal): Promise<GenResult>;
 }
 
 /**

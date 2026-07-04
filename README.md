@@ -24,7 +24,7 @@ runs on your machine and can work fully offline against a local model.
 Monorepo driven by [**Vite+**](https://viteplus.dev) (`vp`), the unified
 MIT-licensed toolchain (Vite/Rolldown, Vitest, Oxlint, Oxfmt, tsgo).
 
-| Package           | What                                                             |
+| Package           | What                                                            |
 | ----------------- | --------------------------------------------------------------- |
 | `apps/web`        | Vite + React + TypeScript UI. Zustand state, Konva canvas.      |
 | `apps/server`     | Hono on Node — the local backend. Holds keys, routes providers. |
