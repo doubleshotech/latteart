@@ -11,6 +11,21 @@ catalog:
   vite: npm:@voidzero-dev/vite-plus-core@latest
   vitest: npm:@voidzero-dev/vite-plus-test@latest
   vite-plus: latest
+  '@fontsource-variable/geist': ^5.2.9
+  '@fontsource-variable/geist-mono': ^5.2.8
+  clsx: ^2.1.1
+  tailwind-merge: ^3.6.0
+  class-variance-authority: ^0.7.1
+  lucide-react: ^1.23.0
+  '@radix-ui/react-dialog': ^1.1.18
+  '@radix-ui/react-slider': ^1.4.2
+  '@radix-ui/react-dropdown-menu': ^2.1.19
+  '@radix-ui/react-tooltip': ^1.2.11
+  zustand: ^5.0.14
+  konva: ^10.3.0
+  react-konva: ^19.2.5
+  tailwindcss: ^4.3.2
+  '@tailwindcss/vite': ^4.3.2
 overrides:
   vite: "catalog:"
   vitest: "catalog:"
