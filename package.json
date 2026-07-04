@@ -6,7 +6,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "vp run -r dev",
+    "dev": "concurrently -k -n server,web -c yellow,cyan \"vp run @latteart/server#dev\" \"vp run @latteart/web#dev\"",
     "dev:web": "vp run @latteart/web#dev",
     "dev:server": "vp run @latteart/server#dev",
     "build": "vp run -r build",
@@ -15,6 +15,7 @@
     "ready": "vp check && vp run -r build"
   },
   "devDependencies": {
+    "concurrently": "catalog:",
     "vite-plus": "catalog:"
   },
   "engines": {

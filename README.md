@@ -35,11 +35,13 @@ Frontend ↔ backend are type-shared via **Hono RPC**.
 ## Develop
 
 ```bash
-vp install           # install workspace deps
-vp run -r dev        # run web + server together
+vp install    # install workspace deps
+pnpm dev      # run web + server together (backend + Vite, concurrently)
 ```
 
-- Web: http://localhost:5173
+Or run them in separate terminals: `pnpm dev:server` and `pnpm dev:web`.
+
+- Web: http://localhost:5173 (Vite picks the next free port if taken)
 - Server: http://localhost:8787 (proxied under `/api` from the web dev server)
 
 ## License

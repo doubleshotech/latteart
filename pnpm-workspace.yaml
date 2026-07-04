@@ -26,6 +26,7 @@ catalog:
   react-konva: ^19.2.5
   tailwindcss: ^4.3.2
   "@tailwindcss/vite": ^4.3.2
+  concurrently: ^10.0.3
 overrides:
   vite: "catalog:"
   vitest: "catalog:"
