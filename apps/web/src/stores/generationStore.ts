@@ -78,7 +78,7 @@ export const useGeneration = create<GenerationState>((set, get) => ({
                 progress: 100,
               });
             } else if (e.type === "error") {
-              d.updateLayer(layerId, { status: "error" });
+              d.removeLayer(layerId);
               set({ error: e.message });
             }
           },
@@ -90,7 +90,8 @@ export const useGeneration = create<GenerationState>((set, get) => ({
         // Cancelled — drop the placeholder and return to idle.
         useDocument.getState().removeLayer(layerId);
       } else {
-        useDocument.getState().updateLayer(layerId, { status: "error" });
+        // Failed (bad key, quota, refusal) — drop the placeholder, surface why.
+        useDocument.getState().removeLayer(layerId);
         set({ error: e.message });
       }
     } finally {

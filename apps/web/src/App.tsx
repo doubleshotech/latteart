@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { CanvasStage } from "./canvas/CanvasStage";
+import { ErrorToast } from "./components/ErrorToast";
 import { LayerPanel } from "./components/LayerPanel";
 import { PromptBar } from "./components/PromptBar";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -34,6 +35,7 @@ export default function App() {
         <LayerPanel />
       </div>
       <SettingsDialog />
+      <ErrorToast />
     </div>
   );
 }

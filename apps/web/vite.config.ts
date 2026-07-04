@@ -34,7 +34,7 @@ export default defineConfig({
       // The backend is the only thing that talks to providers. Proxying /api
       // keeps the browser same-origin and kills CORS for local models.
       "/api": {
-        target: "http://localhost:8787",
+        target: "http://localhost:8899",
         changeOrigin: true,
       },
     },

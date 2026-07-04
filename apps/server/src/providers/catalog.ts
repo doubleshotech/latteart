@@ -61,6 +61,20 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     keyPlaceholder: "Paste your OpenAI API key…",
   },
   {
+    id: "gemini",
+    label: "Google Gemini",
+    kind: "cloud",
+    blurb: "Nano Banana image models · Google AI Studio key",
+    requiresKey: true,
+    capabilities: caps({ txt2img: true }),
+    models: [
+      { id: "gemini-2.5-flash-image", label: "Gemini 2.5 Flash Image" },
+      { id: "gemini-3-pro-image", label: "Gemini 3 Pro Image" },
+    ],
+    implemented: true,
+    keyPlaceholder: "Paste your Google AI Studio API key…",
+  },
+  {
     id: "comfyui",
     label: "ComfyUI",
     sublabel: "· local",

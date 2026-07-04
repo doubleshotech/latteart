@@ -132,7 +132,7 @@ const routes = app
 export type AppType = typeof routes;
 export default app;
 
-const port = Number(process.env.PORT ?? 8787);
+const port = Number(process.env.PORT ?? 8899);
 serve({ fetch: app.fetch, port }, (info) => {
   console.log(`latteart server → http://localhost:${info.port}`);
 });

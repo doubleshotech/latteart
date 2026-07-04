@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Image as KonvaImage } from "react-konva";
 import type Konva from "konva";
 import type { KonvaEventObject } from "konva/lib/Node";
@@ -15,6 +16,21 @@ export function LayerNode({
   const img = useImage(layer.src);
   const select = useDocument((s) => s.select);
   const updateLayer = useDocument((s) => s.updateLayer);
+
+  // Fit the layer to the real image's aspect once it loads — providers return
+  // varying sizes, but the placeholder was created at the requested size.
+  useEffect(() => {
+    if (!img?.naturalWidth || !img.naturalHeight) return;
+    const current = useDocument.getState().layers.find((x) => x.id === layer.id);
+    if (!current) return;
+    const imgAspect = img.naturalWidth / img.naturalHeight;
+    const layerAspect = current.width / current.height;
+    if (Math.abs(imgAspect - layerAspect) > 0.02) {
+      useDocument.getState().updateLayer(layer.id, {
+        height: Math.round(current.width / imgAspect),
+      });
+    }
+  }, [img, layer.id]);
 
   if (!layer.visible) return null;
 

@@ -1,4 +1,5 @@
 import type { ImageProvider } from "@latteart/shared";
+import { geminiProvider } from "./gemini.ts";
 import { mockProvider } from "./mock.ts";
 
 /**
@@ -21,3 +22,6 @@ export function listProviders(): ImageProvider[] {
 
 // Built-in providers available with zero configuration.
 registerProvider(mockProvider);
+
+// Cloud providers (usable once the user adds a key in Settings).
+registerProvider(geminiProvider);

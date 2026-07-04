@@ -19,6 +19,7 @@ const CAP_LABELS: Record<string, string> = {
 const ICONS: Record<string, { char: string; bg: string; color: string }> = {
   fal: { char: "f", bg: "linear-gradient(150deg,#3a3fa0,#23264d)", color: "#c8ccff" },
   openai: { char: "◎", bg: "linear-gradient(150deg,#1f6f5c,#123a31)", color: "#a7e8d4" },
+  gemini: { char: "G", bg: "linear-gradient(150deg,#4285f4,#1b3a6b)", color: "#dbe7ff" },
   comfyui: { char: "C", bg: "linear-gradient(150deg,#6b3f9e,#341f4d)", color: "#dcc4ff" },
   mock: { char: "M", bg: "var(--surface-2)", color: "var(--text-muted)" },
 };

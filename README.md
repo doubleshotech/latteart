@@ -42,7 +42,7 @@ pnpm dev      # run web + server together (backend + Vite, concurrently)
 Or run them in separate terminals: `pnpm dev:server` and `pnpm dev:web`.
 
 - Web: http://localhost:5173 (Vite picks the next free port if taken)
-- Server: http://localhost:8787 (proxied under `/api` from the web dev server)
+- Server: http://localhost:8899 (proxied under `/api` from the web dev server)
 
 ## License
 
