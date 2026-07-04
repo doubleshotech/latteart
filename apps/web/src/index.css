@@ -98,3 +98,132 @@ body {
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
+
+/* infinite-canvas surface: dotted texture (parallax via inline bg-position) + vignette */
+.canvas-root {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--surface-canvas);
+}
+.canvas-dots {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(circle, rgb(255 255 255 / 0.06) 1.2px, transparent 1.4px);
+}
+.canvas-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(125% 95% at 46% 40%, transparent 52%, rgb(0 0 0 / 0.4));
+}
+
+/* Radix dropdown menus (provider / size pickers) */
+.dd-content {
+  min-width: 168px;
+  background: var(--surface-float);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 5px;
+  box-shadow: 0 18px 44px -14px rgb(0 0 0 / 0.7);
+  z-index: 50;
+}
+.dd-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+.dd-item[data-highlighted] {
+  background: var(--surface-2);
+}
+
+/* Layer panel rows */
+.layer-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.layer-row:hover:not(.is-selected) {
+  background: rgb(255 255 255 / 0.03);
+}
+.layer-row.is-selected {
+  background: var(--surface-2);
+}
+
+/* Radix opacity slider */
+.op-slider {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 12px;
+  flex: 1;
+  user-select: none;
+  touch-action: none;
+}
+.op-track {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  border-radius: 3px;
+  background: var(--surface-canvas);
+}
+.op-range {
+  position: absolute;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--text-faint);
+}
+.layer-row.is-selected .op-range {
+  background: var(--accent);
+}
+.op-thumb {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1.5px solid var(--text-faint);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+  outline: none;
+}
+.layer-row.is-selected .op-thumb {
+  border-color: var(--accent);
+}
+
+/* Radix dialog */
+.dlg-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgb(6 7 9 / 0.66);
+  backdrop-filter: blur(3px);
+  z-index: 40;
+}
+.dlg-content {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 696px;
+  max-width: calc(100vw - 32px);
+  max-height: min(640px, calc(100vh - 32px));
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-float);
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 40px 90px -20px rgb(0 0 0 / 0.85);
+  z-index: 41;
+}
