@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type LayerStatus = "ready" | "generating" | "error";
+export type LayerStatus = "ready" | "generating";
 
 /**
  * A layer is plain serializable data — no Konva objects live here. The canvas
