@@ -9,19 +9,30 @@ export interface GenerateParams {
   seed?: number;
 }
 
+export interface EditParams {
+  providerId: string;
+  model?: string;
+  prompt: string;
+  /** Source image as a data: URL. */
+  image: string;
+  mode?: "img2img" | "inpaint" | "outpaint";
+}
+
+interface StreamHandlers {
+  onEvent: (e: ProgressEvent) => void;
+  signal?: AbortSignal;
+}
+
 /**
- * POST /api/generate and read the SSE stream, dispatching each ProgressEvent.
+ * POST a JSON body and read the SSE ProgressEvent stream, dispatching each event.
  * Cancel by aborting `signal` — the backend sees the disconnect and stops the
  * provider run. Resolves when the stream closes.
  */
-export async function streamGenerate(
-  params: GenerateParams,
-  handlers: { onEvent: (e: ProgressEvent) => void; signal?: AbortSignal },
-): Promise<void> {
-  const res = await fetch("/api/generate", {
+async function postSSE(path: string, body: unknown, handlers: StreamHandlers): Promise<void> {
+  const res = await fetch(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(params),
+    body: JSON.stringify(body),
     signal: handlers.signal,
   });
 
@@ -33,7 +44,7 @@ export async function streamGenerate(
     } catch {
       /* keep statusText */
     }
-    throw new Error(msg || "generation failed");
+    throw new Error(msg || "request failed");
   }
 
   const reader = res.body.getReader();
@@ -57,4 +68,14 @@ export async function streamGenerate(
       idx = buf.indexOf("\n\n");
     }
   }
+}
+
+/** Text-to-image generation over `POST /api/generate`. */
+export function streamGenerate(params: GenerateParams, handlers: StreamHandlers): Promise<void> {
+  return postSSE("/api/generate", params, handlers);
+}
+
+/** Image-to-image edit (AI Merge) over `POST /api/edit`. */
+export function streamEdit(params: EditParams, handlers: StreamHandlers): Promise<void> {
+  return postSSE("/api/edit", params, handlers);
 }

@@ -1,5 +1,6 @@
 import { noCapabilities } from "@latteart/shared";
 import type {
+  EditRequest,
   GenResult,
   GenerateRequest,
   ImageProvider,
@@ -41,6 +42,96 @@ function findInlineImage(node: unknown): { mimeType: string; data: string } | nu
   return null;
 }
 
+/** Aspect ratios the Gemini image API accepts (width:height). */
+const GEMINI_ASPECT_RATIOS = [
+  { ratio: "1:1", value: 1 },
+  { ratio: "2:3", value: 2 / 3 },
+  { ratio: "3:2", value: 3 / 2 },
+  { ratio: "3:4", value: 3 / 4 },
+  { ratio: "4:3", value: 4 / 3 },
+  { ratio: "4:5", value: 4 / 5 },
+  { ratio: "5:4", value: 5 / 4 },
+  { ratio: "9:16", value: 9 / 16 },
+  { ratio: "16:9", value: 16 / 9 },
+  { ratio: "21:9", value: 21 / 9 },
+];
+
+/** Snap a requested pixel size to the closest aspect ratio Gemini supports. */
+function nearestAspectRatio(width: number, height: number): string {
+  if (!width || !height) return "1:1";
+  const target = width / height;
+  let best = GEMINI_ASPECT_RATIOS[0]!;
+  for (const entry of GEMINI_ASPECT_RATIOS) {
+    if (Math.abs(entry.value - target) < Math.abs(best.value - target)) best = entry;
+  }
+  return best.ratio;
+}
+
+/** Parse a `data:<mime>;base64,<data>` URL into its parts. */
+function parseDataUrl(url: string): { mimeType: string; data: string } | null {
+  const m = /^data:(.*?);base64,(.*)$/s.exec(url);
+  if (!m) return null;
+  return { mimeType: m[1] || "image/png", data: m[2] ?? "" };
+}
+
+/** Pull the first inline image out of a Gemini response, or throw a clean error. */
+async function readImage(res: Response): Promise<{ mimeType: string; data: string }> {
+  if (!res.ok) {
+    let message = `Gemini request failed (${res.status})`;
+    try {
+      const err = (await res.json()) as { error?: { message?: string } };
+      if (err.error?.message) message = err.error.message;
+    } catch {
+      /* keep the status-code message */
+    }
+    throw new Error(message);
+  }
+
+  let data: unknown;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error("Gemini returned no image — the model may have declined this prompt");
+  }
+
+  const image = findInlineImage(data);
+  if (!image) {
+    throw new Error("Gemini returned no image — the model may have declined this prompt");
+  }
+  return image;
+}
+
+/**
+ * POST content parts to `:generateContent` and return the first image. The key
+ * goes in the `x-goog-api-key` header (never the URL). `imageConfig` nudges the
+ * output aspect ratio; a model that doesn't support it just ignores the field,
+ * so it never breaks the request.
+ */
+async function generateContent(
+  model: string,
+  parts: unknown[],
+  apiKey: string,
+  signal: AbortSignal | undefined,
+  imageConfig?: { aspectRatio: string },
+): Promise<{ mimeType: string; data: string }> {
+  const res = await fetch(`${BASE}/models/${model}:generateContent`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-goog-api-key": apiKey,
+    },
+    body: JSON.stringify({
+      contents: [{ parts }],
+      generationConfig: {
+        responseModalities: ["TEXT", "IMAGE"],
+        ...(imageConfig ? { imageConfig } : {}),
+      },
+    }),
+    signal,
+  });
+  return readImage(res);
+}
+
 /**
  * Google Gemini image generation (BYOK, Google AI Studio key). Uses the
  * `:generateContent` endpoint with the key in the `x-goog-api-key` header (never
@@ -51,7 +142,7 @@ export const geminiProvider: ImageProvider = {
   label: "Google Gemini",
   kind: "cloud",
   requiresKey: true,
-  capabilities: { ...noCapabilities(), txt2img: true },
+  capabilities: { ...noCapabilities(), txt2img: true, img2img: true },
 
   async listModels(): Promise<ModelInfo[]> {
     return [
@@ -68,40 +159,13 @@ export const geminiProvider: ImageProvider = {
     if (!ctx.apiKey) {
       throw new Error("Gemini needs an API key — create one at aistudio.google.com");
     }
-    const model = req.model ?? "gemini-2.5-flash-image";
+    const model = req.model?.trim() || "gemini-2.5-flash-image";
 
     // Single synchronous call — no step stream, so report coarse progress.
     ctx.onProgress?.(15);
-    const res = await fetch(`${BASE}/models/${model}:generateContent`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-goog-api-key": ctx.apiKey,
-      },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: req.prompt }] }],
-        generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
-      }),
-      signal,
+    const image = await generateContent(model, [{ text: req.prompt }], ctx.apiKey, signal, {
+      aspectRatio: nearestAspectRatio(req.width, req.height),
     });
-
-    ctx.onProgress?.(70);
-    if (!res.ok) {
-      let message = `Gemini request failed (${res.status})`;
-      try {
-        const err = (await res.json()) as { error?: { message?: string } };
-        if (err.error?.message) message = err.error.message;
-      } catch {
-        /* keep the status-code message */
-      }
-      throw new Error(message);
-    }
-
-    const data = await res.json();
-    const image = findInlineImage(data);
-    if (!image) {
-      throw new Error("Gemini returned no image — the model may have declined this prompt");
-    }
 
     ctx.onProgress?.(100);
     return {
@@ -112,6 +176,47 @@ export const geminiProvider: ImageProvider = {
           dataUrl: `data:${image.mimeType};base64,${image.data}`,
           width: req.width,
           height: req.height,
+        },
+      ],
+      provider: "gemini",
+      model,
+      seed: req.seed,
+      createdAt: Date.now(),
+    };
+  },
+
+  /**
+   * Image-to-image: hand Gemini a source image plus an instruction and get one
+   * image back. latteart drives "AI Merge" through here — a flattened composite
+   * of the canvas plus a harmonize prompt (Strategy B). We don't force an aspect
+   * ratio so the model preserves the source composition.
+   */
+  async edit(req: EditRequest, ctx: ProviderContext, signal?: AbortSignal): Promise<GenResult> {
+    if (!ctx.apiKey) {
+      throw new Error("Gemini needs an API key — create one at aistudio.google.com");
+    }
+    const source = parseDataUrl(req.image);
+    if (!source) {
+      throw new Error("Gemini edit expected a base64 data URL for the source image");
+    }
+    const model = req.model?.trim() || "gemini-2.5-flash-image";
+
+    ctx.onProgress?.(15);
+    const image = await generateContent(
+      model,
+      [{ text: req.prompt }, { inlineData: { mimeType: source.mimeType, data: source.data } }],
+      ctx.apiKey,
+      signal,
+    );
+
+    ctx.onProgress?.(100);
+    return {
+      id: crypto.randomUUID(),
+      images: [
+        {
+          dataUrl: `data:${image.mimeType};base64,${image.data}`,
+          width: req.width ?? 1024,
+          height: req.height ?? 1024,
         },
       ],
       provider: "gemini",

@@ -1,9 +1,17 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { logger } from "hono/logger";
 import { streamSSE } from "hono/streaming";
-import type { GenerateRequest, ProgressEvent } from "@latteart/shared";
+import type {
+  EditRequest,
+  GenResult,
+  GenerateRequest,
+  ProgressEvent,
+  ProviderContext,
+} from "@latteart/shared";
 import { PROVIDER_CATALOG, catalogEntry } from "./providers/catalog.ts";
+import type { ProviderCatalogEntry } from "./providers/catalog.ts";
 import { getProvider } from "./providers/registry.ts";
 import { deleteSecret, getSecretValue, hasSecret, setSecret } from "./keystore/index.ts";
 
@@ -18,6 +26,53 @@ import { deleteSecret, getSecretValue, hasSecret, setSecret } from "./keystore/i
 const app = new Hono();
 
 app.use("*", logger());
+
+/**
+ * Run a provider call (generate or edit) as an SSE job: queued → progress* →
+ * done | error | canceled. Cancel = the client disconnects; we catch the abort
+ * and stop the provider run. The `run` closure supplies the actual call so the
+ * queuing, progress plumbing, and abort handling stay in one place.
+ */
+function streamJob(
+  c: Context,
+  providerId: string,
+  entry: ProviderCatalogEntry,
+  run: (ctx: ProviderContext, signal: AbortSignal) => Promise<GenResult>,
+) {
+  return streamSSE(c, async (stream) => {
+    const ac = new AbortController();
+    stream.onAbort(() => ac.abort());
+
+    const jobId = crypto.randomUUID();
+    const send = (e: ProgressEvent) => stream.writeSSE({ data: JSON.stringify(e) }).catch(() => {});
+
+    await send({ type: "queued", jobId });
+    try {
+      const result = await run(
+        {
+          apiKey: getSecretValue(providerId),
+          baseUrl: entry.connection
+            ? (getSecretValue(providerId) ?? entry.connection.defaultValue)
+            : undefined,
+          onProgress: (pct, extra) => void send({ type: "progress", jobId, pct, ...extra }),
+        },
+        ac.signal,
+      );
+      await send({ type: "done", jobId, result });
+    } catch (err) {
+      const e = err as Error;
+      if (ac.signal.aborted || e?.name === "AbortError") {
+        await send({ type: "canceled", jobId });
+      } else {
+        await send({
+          type: "error",
+          jobId,
+          message: e?.message ?? "generation failed",
+        });
+      }
+    }
+  });
+}
 
 const routes = app
   .get("/api/health", (c) =>
@@ -91,41 +146,43 @@ const routes = app
       seed: typeof body.seed === "number" ? body.seed : undefined,
     };
 
-    return streamSSE(c, async (stream) => {
-      const ac = new AbortController();
-      stream.onAbort(() => ac.abort());
+    return streamJob(c, providerId, entry, (ctx, signal) => provider.generate(req, ctx, signal));
+  })
 
-      const jobId = crypto.randomUUID();
-      const send = (e: ProgressEvent) =>
-        stream.writeSSE({ data: JSON.stringify(e) }).catch(() => {});
+  // Edit an existing image (img2img). latteart's "AI Merge" flattens the visible
+  // canvas to one composite and hands it here with a harmonize prompt. Same SSE
+  // contract as /api/generate.
+  .post("/api/edit", async (c) => {
+    const body = await c.req.json<Partial<EditRequest>>().catch(() => ({}) as Partial<EditRequest>);
+    const providerId = String(body.providerId ?? "");
+    const entry = catalogEntry(providerId);
+    const provider = getProvider(providerId);
+    const prompt = String(body.prompt ?? "").trim();
+    const image = typeof body.image === "string" ? body.image : "";
 
-      await send({ type: "queued", jobId });
-      try {
-        const result = await provider.generate(
-          req,
-          {
-            apiKey: getSecretValue(providerId),
-            baseUrl: entry.connection
-              ? (getSecretValue(providerId) ?? entry.connection.defaultValue)
-              : undefined,
-            onProgress: (pct, extra) => void send({ type: "progress", jobId, pct, ...extra }),
-          },
-          ac.signal,
-        );
-        await send({ type: "done", jobId, result });
-      } catch (err) {
-        const e = err as Error;
-        if (ac.signal.aborted || e?.name === "AbortError") {
-          await send({ type: "canceled", jobId });
-        } else {
-          await send({
-            type: "error",
-            jobId,
-            message: e?.message ?? "generation failed",
-          });
-        }
-      }
-    });
+    if (!entry) return c.json({ error: "unknown provider" }, 404);
+    if (!provider) return c.json({ error: `provider '${providerId}' is not available yet` }, 400);
+    if (!provider.edit)
+      return c.json({ error: `${entry.label} does not support editing yet` }, 400);
+    if (!prompt) return c.json({ error: "prompt is required" }, 400);
+    if (!image.startsWith("data:")) return c.json({ error: "a source image is required" }, 400);
+    if (provider.requiresKey && !hasSecret(providerId))
+      return c.json({ error: "missing API key" }, 400);
+
+    const req: EditRequest = {
+      providerId,
+      model: body.model,
+      prompt,
+      image,
+      mask: body.mask,
+      mode: body.mode ?? "img2img",
+      strength: typeof body.strength === "number" ? body.strength : undefined,
+      width: Number(body.width) || undefined,
+      height: Number(body.height) || undefined,
+      seed: typeof body.seed === "number" ? body.seed : undefined,
+    };
+
+    return streamJob(c, providerId, entry, (ctx, signal) => provider.edit!(req, ctx, signal));
   });
 
 /** Consumed by the web client as `hc<AppType>()` — type-only, never bundled. */

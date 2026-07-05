@@ -66,7 +66,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     kind: "cloud",
     blurb: "Nano Banana image models · Google AI Studio key",
     requiresKey: true,
-    capabilities: caps({ txt2img: true }),
+    capabilities: caps({ txt2img: true, img2img: true }),
     models: [
       { id: "gemini-2.5-flash-image", label: "Gemini 2.5 Flash Image" },
       { id: "gemini-3-pro-image", label: "Gemini 3 Pro Image" },
