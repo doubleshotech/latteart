@@ -4,6 +4,7 @@ export interface GenerateParams {
   providerId: string;
   model?: string;
   prompt: string;
+  styleId?: string;
   width: number;
   height: number;
   seed?: number;

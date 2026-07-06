@@ -10,6 +10,7 @@ import type {
   ProgressEvent,
   ProviderContext,
 } from "@latteart/shared";
+import { applyStyle, stylePreset } from "@latteart/shared";
 import { PROVIDER_CATALOG, catalogEntry } from "./providers/catalog.ts";
 import type { ProviderCatalogEntry } from "./providers/catalog.ts";
 import { getProvider } from "./providers/registry.ts";
@@ -129,18 +130,23 @@ const routes = app
     const entry = catalogEntry(providerId);
     const provider = getProvider(providerId);
     const prompt = String(body.prompt ?? "").trim();
+    const styleId = body.styleId === undefined ? undefined : String(body.styleId);
 
     if (!entry) return c.json({ error: "unknown provider" }, 404);
     if (!provider) return c.json({ error: `provider '${providerId}' is not available yet` }, 400);
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
+    if (styleId !== undefined && !stylePreset(styleId))
+      return c.json({ error: "unknown style" }, 400);
     if (provider.requiresKey && !hasSecret(providerId))
       return c.json({ error: "missing API key" }, 400);
 
+    const styled = applyStyle(prompt, styleId, body.negativePrompt);
     const req: GenerateRequest = {
       providerId,
       model: body.model,
-      prompt,
-      negativePrompt: body.negativePrompt,
+      prompt: styled.prompt,
+      negativePrompt: styled.negativePrompt,
+      styleId,
       width: Number(body.width) || 1024,
       height: Number(body.height) || 1024,
       seed: typeof body.seed === "number" ? body.seed : undefined,

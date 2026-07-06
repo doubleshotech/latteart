@@ -30,6 +30,7 @@ interface GenerationState {
     providerId: string;
     model?: string;
     prompt: string;
+    styleId?: string;
     width: number;
     height: number;
   }) => Promise<void>;
@@ -103,7 +104,7 @@ export const useGeneration = create<GenerationState>((set, get) => {
 
     clearError: () => set({ error: null }),
 
-    start: async ({ providerId, model, prompt, width, height }) => {
+    start: async ({ providerId, model, prompt, styleId, width, height }) => {
       if (get().running) return;
 
       const doc = useDocument.getState();
@@ -128,7 +129,7 @@ export const useGeneration = create<GenerationState>((set, get) => {
       });
 
       await runStream(layerId, prevSelectedId, ({ signal, onEvent }) =>
-        streamGenerate({ providerId, model, prompt, width, height }, { signal, onEvent }),
+        streamGenerate({ providerId, model, prompt, styleId, width, height }, { signal, onEvent }),
       );
     },
 

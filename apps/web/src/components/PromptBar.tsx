@@ -1,6 +1,7 @@
 import { useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ChevronDown, Sparkles, X } from "lucide-react";
+import { ChevronDown, Palette, Sparkles, X } from "lucide-react";
+import { STYLE_PRESETS } from "@latteart/shared";
 import { useDocument } from "../stores/documentStore";
 import { useGeneration } from "../stores/generationStore";
 import { useProviders } from "../stores/providersStore";
@@ -11,7 +12,7 @@ const barBase: React.CSSProperties = {
   left: "50%",
   bottom: 26,
   transform: "translateX(-50%)",
-  width: 724,
+  width: 780,
   maxWidth: "calc(100% - 40px)",
   display: "flex",
   alignItems: "center",
@@ -44,8 +45,10 @@ export function PromptBar() {
   const providerId = useSession((s) => s.providerId);
   const model = useSession((s) => s.model);
   const size = useSession((s) => s.size);
+  const styleId = useSession((s) => s.styleId);
   const setProvider = useSession((s) => s.setProvider);
   const setSize = useSession((s) => s.setSize);
+  const setStyle = useSession((s) => s.setStyle);
   const openSettings = useSession((s) => s.openSettings);
 
   const running = useGeneration((s) => s.running);
@@ -66,6 +69,8 @@ export function PromptBar() {
     ? `${active.label}${activeModelLabel ? ` · ${activeModelLabel}` : ""}`
     : "Select provider";
 
+  const activeStyle = STYLE_PRESETS.find((s) => s.id === styleId) ?? STYLE_PRESETS[0]!;
+
   const canGenerate = prompt.trim().length > 0 && !!active?.available && !running;
 
   const submit = () => {
@@ -74,6 +79,7 @@ export function PromptBar() {
       providerId: active.id,
       model: model ?? active.models[0]?.id,
       prompt,
+      styleId,
       width: size.w,
       height: size.h,
     });
@@ -255,6 +261,43 @@ export function PromptBar() {
                 onSelect={() => setSize(s)}
               >
                 {s.label}
+              </DropdownMenu.Item>
+            ))}
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+
+      {/* style picker */}
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger asChild>
+          <button type="button" style={pillBtn}>
+            <Palette size={13} strokeWidth={1.9} color="var(--text-faint)" />
+            <span style={{ color: styleId === "none" ? "var(--text-muted)" : "var(--text)" }}>
+              {styleId === "none" ? "Style" : activeStyle.label}
+            </span>
+            <ChevronDown size={13} strokeWidth={1.9} color="var(--text-faint)" />
+          </button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content className="dd-content" sideOffset={8} align="end">
+            {STYLE_PRESETS.map((s) => (
+              <DropdownMenu.Item
+                key={s.id}
+                className="dd-item"
+                style={{ flexDirection: "column", alignItems: "flex-start", gap: 1 }}
+                onSelect={() => setStyle(s.id)}
+              >
+                <span
+                  style={{
+                    color: s.id === styleId ? "var(--accent)" : "var(--text)",
+                    fontWeight: s.id === styleId ? 600 : 400,
+                  }}
+                >
+                  {s.label}
+                </span>
+                {s.blurb && (
+                  <span style={{ fontSize: 11, color: "var(--text-faint)" }}>{s.blurb}</span>
+                )}
               </DropdownMenu.Item>
             ))}
           </DropdownMenu.Content>

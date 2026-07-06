@@ -38,6 +38,8 @@ export interface GenerateRequest {
   model?: string;
   prompt: string;
   negativePrompt?: string;
+  /** Style preset id from STYLE_PRESETS; the route composes it into the prompt. */
+  styleId?: string;
   width: number;
   height: number;
   seed?: number;
@@ -166,6 +168,7 @@ export interface GenerateApiRequest {
   model?: string;
   prompt: string;
   negativePrompt?: string;
+  styleId?: string;
   width: number;
   height: number;
   seed?: number;
