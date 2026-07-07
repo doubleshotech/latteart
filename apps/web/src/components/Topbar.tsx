@@ -3,8 +3,16 @@ import { LogoMark } from "./LogoMark";
 import { flattenLayers } from "../lib/flatten";
 import { useDocument } from "../stores/documentStore";
 import { useGeneration } from "../stores/generationStore";
+import { useProject } from "../stores/projectStore";
 import { useProviders } from "../stores/providersStore";
 import { useSession } from "../stores/sessionStore";
+
+const SAVE_LABELS = {
+  idle: null,
+  saving: "Saving…",
+  saved: "Saved ✓",
+  error: "Save failed — retrying",
+} as const;
 
 export function Topbar() {
   const providers = useProviders((s) => s.providers);
@@ -14,6 +22,7 @@ export function Topbar() {
   const layers = useDocument((s) => s.layers);
   const running = useGeneration((s) => s.running);
   const merge = useGeneration((s) => s.merge);
+  const saveStatus = useProject((s) => s.status);
 
   const active = providers.find((p) => p.id === providerId);
   const keyed = active?.kind === "cloud" && active.hasKey;
@@ -56,6 +65,17 @@ export function Topbar() {
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <LogoMark />
         <span style={{ fontSize: 13.5, fontWeight: 600, letterSpacing: "-.01em" }}>latteart</span>
+        {SAVE_LABELS[saveStatus] && (
+          <span
+            style={{
+              fontSize: 11,
+              color: saveStatus === "error" ? "#f0616d" : "var(--text-faint)",
+              marginTop: 1,
+            }}
+          >
+            {SAVE_LABELS[saveStatus]}
+          </span>
+        )}
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

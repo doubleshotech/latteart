@@ -19,6 +19,8 @@ export type {
 export type { StylePreset } from "./styles.ts";
 export { STYLE_PRESETS, stylePreset, applyStyle } from "./styles.ts";
 
+export type { ProjectLayer, ProjectViewport, ProjectSession, ProjectDoc } from "./project.ts";
+
 /** Helper: build a full capability set with everything off by default. */
 export function noCapabilities(): import("./types.ts").ModelCapabilities {
   return {

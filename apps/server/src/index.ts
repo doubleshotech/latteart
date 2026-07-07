@@ -8,6 +8,7 @@ import type {
   GenResult,
   GenerateRequest,
   ProgressEvent,
+  ProjectDoc,
   ProviderContext,
 } from "@latteart/shared";
 import { applyStyle, stylePreset } from "@latteart/shared";
@@ -15,6 +16,7 @@ import { PROVIDER_CATALOG, catalogEntry } from "./providers/catalog.ts";
 import type { ProviderCatalogEntry } from "./providers/catalog.ts";
 import { getProvider } from "./providers/registry.ts";
 import { deleteSecret, getSecretValue, hasSecret, setSecret } from "./keystore/index.ts";
+import { DEFAULT_PROJECT_ID, loadProject, saveProject } from "./projects/index.ts";
 
 /**
  * The latteart local backend. One user, on the user's machine. It holds provider
@@ -117,6 +119,26 @@ const routes = app
     const id = c.req.param("id");
     deleteSecret(id);
     return c.json({ ok: true, id, hasKey: false });
+  })
+
+  // Project persistence (v1: one implicit project). GET rehydrates layer
+  // images to data: URLs; PUT is the autosave sink — the whole document each
+  // time, pixels split out to content-hashed asset files on disk.
+  .get("/api/project", (c) => c.json(loadProject(DEFAULT_PROJECT_ID)))
+
+  .put("/api/project", async (c) => {
+    const body = await c.req.json<ProjectDoc>().catch(() => null);
+    if (
+      !body ||
+      !Array.isArray(body.layers) ||
+      typeof body.viewport !== "object" ||
+      body.viewport === null ||
+      typeof body.session !== "object" ||
+      body.session === null
+    )
+      return c.json({ error: "invalid project" }, 400);
+    const saved = saveProject(DEFAULT_PROJECT_ID, body);
+    return c.json({ ok: true, updatedAt: saved.updatedAt });
   })
 
   // Generate. Returns an SSE stream of ProgressEvents ending in done/error/

@@ -6,6 +6,7 @@ import { PromptBar } from "./components/PromptBar";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { Topbar } from "./components/Topbar";
 import { ZoomControl } from "./components/ZoomControl";
+import { initProjectSync } from "./stores/projectStore";
 import { useProviders } from "./stores/providersStore";
 
 export default function App() {
@@ -13,6 +14,7 @@ export default function App() {
 
   useEffect(() => {
     void refresh();
+    void initProjectSync();
   }, [refresh]);
 
   return (
