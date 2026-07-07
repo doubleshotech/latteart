@@ -79,18 +79,14 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     label: "ComfyUI",
     sublabel: "· local",
     kind: "local",
-    blurb: "Your own workflows, on-device",
+    blurb: "SD / SDXL / FLUX checkpoints, on-device",
     requiresKey: false,
-    capabilities: caps({
-      txt2img: true,
-      img2img: true,
-      inpaint: true,
-      outpaint: true,
-      transparentLayers: true,
-      upscale: true,
-    }),
-    models: [{ id: "default", label: "Active workflow" }],
-    implemented: false,
+    // v1 drives fixed txt2img/img2img graphs; inpaint+ come with mask editing.
+    capabilities: caps({ txt2img: true, img2img: true }),
+    // Models are the instance's installed checkpoints — the providers route
+    // fills this live; nothing meaningful to declare statically.
+    models: [],
+    implemented: true,
     connection: {
       field: "url",
       placeholder: "http://127.0.0.1:8188",

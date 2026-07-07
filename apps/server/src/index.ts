@@ -14,6 +14,7 @@ import type {
 import { applyStyle, stylePreset } from "@latteart/shared";
 import { PROVIDER_CATALOG, catalogEntry } from "./providers/catalog.ts";
 import type { ProviderCatalogEntry } from "./providers/catalog.ts";
+import { listComfyCheckpoints } from "./providers/comfyui.ts";
 import { getProvider } from "./providers/registry.ts";
 import { deleteSecret, getSecretValue, hasSecret, setSecret } from "./keystore/index.ts";
 import { DEFAULT_PROJECT_ID, loadProject, saveProject } from "./projects/index.ts";
@@ -83,23 +84,37 @@ const routes = app
   )
 
   // What providers exist, what they can do, and whether they're usable. Never
-  // returns a secret — only whether one is present.
-  .get("/api/providers", (c) => {
-    const list = PROVIDER_CATALOG.map((p) => ({
-      id: p.id,
-      label: p.label,
-      sublabel: p.sublabel ?? null,
-      kind: p.kind,
-      blurb: p.blurb,
-      requiresKey: p.requiresKey,
-      capabilities: p.capabilities,
-      models: p.models,
-      implemented: p.implemented,
-      connection: p.connection ?? null,
-      keyPlaceholder: p.keyPlaceholder ?? null,
-      hasKey: hasSecret(p.id),
-      available: p.implemented && (!p.requiresKey || hasSecret(p.id)),
-    }));
+  // returns a secret — only whether one is present. ComfyUI's models are its
+  // installed checkpoints, so probe the live instance (short timeout) and let
+  // reachability drive availability.
+  .get("/api/providers", async (c) => {
+    const list = await Promise.all(
+      PROVIDER_CATALOG.map(async (p) => {
+        let models = p.models;
+        let available = p.implemented && (!p.requiresKey || hasSecret(p.id));
+        if (p.id === "comfyui" && p.implemented) {
+          const baseUrl = getSecretValue(p.id) ?? p.connection!.defaultValue;
+          const live = await listComfyCheckpoints(baseUrl);
+          models = live ?? [];
+          available = live !== null && live.length > 0;
+        }
+        return {
+          id: p.id,
+          label: p.label,
+          sublabel: p.sublabel ?? null,
+          kind: p.kind,
+          blurb: p.blurb,
+          requiresKey: p.requiresKey,
+          capabilities: p.capabilities,
+          models,
+          implemented: p.implemented,
+          connection: p.connection ?? null,
+          keyPlaceholder: p.keyPlaceholder ?? null,
+          hasKey: hasSecret(p.id),
+          available,
+        };
+      }),
+    );
     return c.json(list);
   })
 
