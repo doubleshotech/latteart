@@ -20,6 +20,10 @@ export interface Layer {
   src: string | null; // data: URL; null while generating
   status: LayerStatus;
   progress: number; // 0..100 while generating
+  /** The prompt that produced this layer — prefills Remix "from source". */
+  prompt: string | null;
+  /** Set on layers produced by an editor action; source may be deleted later. */
+  derivedFrom: { id: string; name: string } | null;
 }
 
 let counter = 0;
@@ -39,6 +43,8 @@ export function makeLayer(partial: Partial<Layer>): Layer {
     src: partial.src ?? null,
     status: partial.status ?? "ready",
     progress: partial.progress ?? 0,
+    prompt: partial.prompt ?? null,
+    derivedFrom: partial.derivedFrom ?? null,
   };
 }
 

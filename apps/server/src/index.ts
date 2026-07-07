@@ -165,6 +165,7 @@ const routes = app
     const provider = getProvider(providerId);
     const prompt = String(body.prompt ?? "").trim();
     const image = typeof body.image === "string" ? body.image : "";
+    const styleId = body.styleId === undefined ? undefined : String(body.styleId);
 
     if (!entry) return c.json({ error: "unknown provider" }, 404);
     if (!provider) return c.json({ error: `provider '${providerId}' is not available yet` }, 400);
@@ -172,13 +173,18 @@ const routes = app
       return c.json({ error: `${entry.label} does not support editing yet` }, 400);
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
     if (!image.startsWith("data:")) return c.json({ error: "a source image is required" }, 400);
+    if (styleId !== undefined && !stylePreset(styleId))
+      return c.json({ error: "unknown style" }, 400);
     if (provider.requiresKey && !hasSecret(providerId))
       return c.json({ error: "missing API key" }, 400);
 
+    const styled = applyStyle(prompt, styleId, body.negativePrompt);
     const req: EditRequest = {
       providerId,
       model: body.model,
-      prompt,
+      prompt: styled.prompt,
+      negativePrompt: styled.negativePrompt,
+      styleId,
       image,
       mask: body.mask,
       mode: body.mode ?? "img2img",

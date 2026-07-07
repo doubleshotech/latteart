@@ -122,8 +122,14 @@ export function Topbar() {
         <button
           type="button"
           onClick={onExport}
-          disabled={!hasImages}
-          title={hasImages ? "Export — flatten visible layers to PNG" : "Nothing to export yet"}
+          disabled={!hasImages || running}
+          title={
+            running
+              ? "Wait for the current generation to finish"
+              : hasImages
+                ? "Export — flatten visible layers to PNG"
+                : "Nothing to export yet"
+          }
           style={{
             display: "flex",
             alignItems: "center",
@@ -137,8 +143,8 @@ export function Topbar() {
             fontSize: 12,
             fontWeight: 500,
             fontFamily: "inherit",
-            cursor: hasImages ? "pointer" : "not-allowed",
-            opacity: hasImages ? 1 : 0.5,
+            cursor: hasImages && !running ? "pointer" : "not-allowed",
+            opacity: hasImages && !running ? 1 : 0.5,
           }}
         >
           <Download size={15} strokeWidth={1.7} />

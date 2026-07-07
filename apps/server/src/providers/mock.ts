@@ -1,5 +1,6 @@
 import { noCapabilities } from "@latteart/shared";
 import type {
+  EditRequest,
   GenResult,
   GenerateRequest,
   ImageProvider,
@@ -86,7 +87,7 @@ export const mockProvider: ImageProvider = {
   label: "Mock",
   kind: "local",
   requiresKey: false,
-  capabilities: { ...noCapabilities(), txt2img: true },
+  capabilities: { ...noCapabilities(), txt2img: true, img2img: true },
 
   async listModels(): Promise<ModelInfo[]> {
     return [{ id: "mock-diffusion", label: "Mock Diffusion" }];
@@ -116,6 +117,42 @@ export const mockProvider: ImageProvider = {
           dataUrl: placeholderSvg(req.prompt, req.width, req.height, seed),
           width: req.width,
           height: req.height,
+        },
+      ],
+      provider: "mock",
+      model: req.model ?? "mock-diffusion",
+      seed,
+      createdAt: Date.now(),
+    };
+  },
+
+  /**
+   * Mock img2img: ignores the source pixels but honors the contract — steps,
+   * cancel, and a deterministic result. Strength shifts the palette so remix
+   * similarity stops are visually distinguishable while testing offline.
+   */
+  async edit(req: EditRequest, ctx: ProviderContext, signal?: AbortSignal): Promise<GenResult> {
+    const totalSteps = 24;
+    const strength = req.strength ?? 0.5;
+    const seed = (req.seed ?? hash(req.prompt) % 100000) + Math.round(strength * 360);
+    const width = req.width ?? 1024;
+    const height = req.height ?? 1024;
+
+    for (let step = 1; step <= totalSteps; step++) {
+      await delay(70, signal);
+      ctx.onProgress?.(Math.round((step / totalSteps) * 100), {
+        step,
+        totalSteps,
+      });
+    }
+
+    return {
+      id: crypto.randomUUID(),
+      images: [
+        {
+          dataUrl: placeholderSvg(`edit · ${req.prompt}`, width, height, seed),
+          width,
+          height,
         },
       ],
       provider: "mock",

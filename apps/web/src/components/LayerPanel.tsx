@@ -1,8 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as Slider from "@radix-ui/react-slider";
-import { Eye, EyeOff, GripVertical, Plus, Sparkles, Trash2 } from "lucide-react";
+import { Eye, EyeOff, GitBranch, GripVertical, Plus, Sparkles, Trash2 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useDocument, type Layer } from "../stores/documentStore";
+import { useGeneration } from "../stores/generationStore";
+import { useSession } from "../stores/sessionStore";
+import { ActionDrillIn } from "./ActionDrillIn";
+import { ActionsDock } from "./ActionsDock";
 
 function Thumb({ layer }: { layer: Layer }) {
   const base: React.CSSProperties = {
@@ -22,6 +26,10 @@ function Thumb({ layer }: { layer: Layer }) {
           alignItems: "center",
           justifyContent: "center",
           background: "var(--surface-2)",
+          backgroundImage:
+            "linear-gradient(100deg, transparent 30%, rgba(255,255,255,.07) 50%, transparent 70%)",
+          backgroundSize: "220% 100%",
+          animation: "latte-sheen 1.4s linear infinite",
         }}
       >
         <span
@@ -57,12 +65,17 @@ function LayerRow({ layer }: { layer: Layer }) {
   const removeLayer = useDocument((s) => s.removeLayer);
   const reorder = useDocument((s) => s.reorder);
   const layers = useDocument((s) => s.layers);
+  const action = useGeneration((s) => s.action);
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(layer.name);
 
   const selected = layer.id === selectedId;
   const generating = layer.status === "generating";
+  /** Working row for an editor action (mockup screen 5): accent tint + provenance. */
+  const workingAction = generating && !!layer.derivedFrom;
+  /** The layer an action is currently reading from. */
+  const isActionSource = action?.sourceId === layer.id;
 
   const commit = () => {
     const name = draft.trim();
@@ -74,7 +87,13 @@ function LayerRow({ layer }: { layer: Layer }) {
   return (
     <div
       className={cn("layer-row", selected && "is-selected")}
-      style={{ opacity: layer.visible ? 1 : 0.55 }}
+      style={{
+        opacity: !layer.visible ? 0.55 : isActionSource ? 0.7 : 1,
+        ...(workingAction && {
+          background: "color-mix(in srgb, var(--accent) 9%, transparent)",
+          border: "1px solid color-mix(in srgb, var(--accent) 30%, transparent)",
+        }),
+      }}
       onMouseDown={() => select(layer.id)}
       draggable={!editing}
       onDragStart={(e) => e.dataTransfer.setData("text/layer", layer.id)}
@@ -156,20 +175,42 @@ function LayerRow({ layer }: { layer: Layer }) {
                 textOverflow: "ellipsis",
               }}
             >
-              {generating ? "Generating…" : layer.name}
+              {generating && !layer.derivedFrom ? "Generating…" : layer.name}
             </span>
           )}
           <span
             style={{
               fontFamily: "var(--font-mono)",
-              fontSize: 10.5,
-              color: generating ? "var(--accent)" : "var(--text-muted)",
+              fontSize: generating || !isActionSource ? 10.5 : 9.5,
+              color: generating || isActionSource ? "var(--accent)" : "var(--text-muted)",
               flex: "none",
             }}
           >
-            {generating ? `${Math.round(layer.progress)}%` : `${Math.round(layer.opacity * 100)}%`}
+            {generating
+              ? `${Math.round(layer.progress)}%`
+              : isActionSource
+                ? "source"
+                : `${Math.round(layer.opacity * 100)}%`}
           </span>
         </div>
+
+        {workingAction && layer.derivedFrom && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              fontFamily: "var(--font-mono)",
+              fontSize: 9,
+              color: "var(--text-faint)",
+            }}
+          >
+            <GitBranch size={10} strokeWidth={2.2} style={{ flex: "none" }} />
+            <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              derived from {layer.derivedFrom.name}
+            </span>
+          </div>
+        )}
 
         {generating ? (
           <div
@@ -255,19 +296,44 @@ const iconBtn: React.CSSProperties = {
 
 export function LayerPanel() {
   const layers = useDocument((s) => s.layers);
+  const selectedId = useDocument((s) => s.selectedId);
+  const actionView = useSession((s) => s.actionView);
+  const closeAction = useSession((s) => s.closeAction);
+  const running = useGeneration((s) => s.running);
   const reversed = [...layers].reverse();
 
+  const selected = layers.find((l) => l.id === selectedId);
+  const drillSource = actionView
+    ? layers.find((l) => l.id === actionView.sourceId && l.status === "ready")
+    : undefined;
+
+  // The drill-in is anchored to one source layer — close it only when that
+  // source is gone or no longer "ready". Selection changes (stray canvas clicks,
+  // a PromptBar generation auto-selecting its placeholder) leave it open so the
+  // user's typed prompt survives; they return via the drill-in's back button.
+  useEffect(() => {
+    if (actionView && !drillSource) closeAction();
+  }, [actionView, drillSource, closeAction]);
+
+  const aside: React.CSSProperties = {
+    width: 288,
+    flex: "none",
+    background: "var(--surface-1)",
+    borderLeft: "1px solid var(--border)",
+    display: "flex",
+    flexDirection: "column",
+  };
+
+  if (actionView && drillSource) {
+    return (
+      <aside style={aside}>
+        <ActionDrillIn view={actionView} source={drillSource} />
+      </aside>
+    );
+  }
+
   return (
-    <aside
-      style={{
-        width: 288,
-        flex: "none",
-        background: "var(--surface-1)",
-        borderLeft: "1px solid var(--border)",
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
+    <aside style={aside}>
       <div
         style={{
           height: 44,
@@ -313,6 +379,8 @@ export function LayerPanel() {
           <Plus size={15} strokeWidth={1.8} />
         </button>
       </div>
+
+      {selected && selected.status === "ready" && !running && <ActionsDock layer={selected} />}
 
       {layers.length === 0 ? (
         <div

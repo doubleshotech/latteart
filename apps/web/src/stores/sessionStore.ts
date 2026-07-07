@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { ActionKind } from "../lib/actions";
 
 export interface SizePreset {
   w: number;
@@ -14,6 +15,14 @@ export const SIZE_PRESETS: SizePreset[] = [
   { w: 512, h: 512, label: "512²" },
 ];
 
+/** Editor actions that open a drill-in panel over the layer panel. */
+export type ActionViewKind = Exclude<ActionKind, "remove-bg">;
+
+export interface ActionView {
+  kind: ActionViewKind;
+  sourceId: string;
+}
+
 /** Cross-cutting UI/session state: active provider+model, size, style, settings modal. */
 interface SessionState {
   providerId: string;
@@ -21,12 +30,16 @@ interface SessionState {
   size: SizePreset;
   styleId: string;
   settingsOpen: boolean;
+  /** Open drill-in in the layer panel (Remix / Change background / Variations). */
+  actionView: ActionView | null;
   setProvider: (id: string, model?: string | null) => void;
   setModel: (model: string) => void;
   setSize: (s: SizePreset) => void;
   setStyle: (styleId: string) => void;
   openSettings: () => void;
   closeSettings: () => void;
+  openAction: (kind: ActionViewKind, sourceId: string) => void;
+  closeAction: () => void;
 }
 
 export const useSession = create<SessionState>((set) => ({
@@ -35,10 +48,13 @@ export const useSession = create<SessionState>((set) => ({
   size: SIZE_PRESETS[0]!,
   styleId: "none",
   settingsOpen: false,
+  actionView: null,
   setProvider: (id, model) => set({ providerId: id, model: model ?? null }),
   setModel: (model) => set({ model }),
   setSize: (size) => set({ size }),
   setStyle: (styleId) => set({ styleId }),
   openSettings: () => set({ settingsOpen: true }),
   closeSettings: () => set({ settingsOpen: false }),
+  openAction: (kind, sourceId) => set({ actionView: { kind, sourceId } }),
+  closeAction: () => set({ actionView: null }),
 }));

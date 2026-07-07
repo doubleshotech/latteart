@@ -2,6 +2,7 @@ import { useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { ChevronDown, Palette, Sparkles, X } from "lucide-react";
 import { STYLE_PRESETS } from "@latteart/shared";
+import { ACTIONS } from "../lib/actions";
 import { useDocument } from "../stores/documentStore";
 import { useGeneration } from "../stores/generationStore";
 import { useProviders } from "../stores/providersStore";
@@ -52,11 +53,17 @@ export function PromptBar() {
   const openSettings = useSession((s) => s.openSettings);
 
   const running = useGeneration((s) => s.running);
+  const action = useGeneration((s) => s.action);
   const start = useGeneration((s) => s.start);
   const cancel = useGeneration((s) => s.cancel);
 
   const genProgress = useDocument(
     (s) => s.layers.find((l) => l.status === "generating")?.progress ?? 0,
+  );
+  // Editor actions anchor progress on their own placeholder, not the first
+  // generating layer — a source may have unrelated placeholders around it.
+  const actionProgress = useDocument(
+    (s) => s.layers.find((l) => l.id === action?.placeholderId)?.progress ?? 0,
   );
 
   const [prompt, setPrompt] = useState("");
@@ -84,6 +91,104 @@ export function PromptBar() {
       height: size.h,
     });
   };
+
+  if (running && action) {
+    // Editor-action progress toast (mockup screen 5) — same slot as the bar.
+    const pct = Math.round(actionProgress);
+    const ActionIcon = ACTIONS[action.kind].icon;
+    return (
+      <div style={{ ...barBase, gap: 12, padding: "11px 8px 11px 15px", overflow: "hidden" }}>
+        <span
+          style={{
+            width: 30,
+            height: 30,
+            flex: "none",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: 8,
+            background: "color-mix(in srgb, var(--accent) 16%, transparent)",
+            color: "var(--accent)",
+          }}
+        >
+          <ActionIcon size={16} strokeWidth={1.8} />
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: 12.5,
+              color: "var(--text)",
+              fontWeight: 500,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {ACTIONS[action.kind].title({
+              sourceName: action.sourceName,
+              index: action.index,
+              count: action.count,
+            })}
+          </div>
+          <div
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 10.5,
+              color: "var(--text-faint)",
+              marginTop: 1,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {action.detail}
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
+          <span
+            style={{
+              width: 16,
+              height: 16,
+              borderRadius: "50%",
+              border: "2.4px solid rgba(255,255,255,0.12)",
+              borderTopColor: "var(--accent)",
+              animation: "latte-spin 0.9s linear infinite",
+            }}
+          />
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text)" }}>
+            {pct}%
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={cancel}
+          style={{
+            ...pillBtn,
+            gap: 6,
+            padding: "0 13px",
+            border: "1px solid var(--border-strong)",
+            fontWeight: 500,
+          }}
+        >
+          <X size={14} strokeWidth={1.9} />
+          Cancel
+        </button>
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            bottom: 0,
+            height: 2,
+            width: `${pct}%`,
+            background: "var(--accent)",
+            borderRadius: "0 2px 0 0",
+            boxShadow: "0 0 10px var(--accent)",
+            transition: "width .2s ease",
+          }}
+        />
+      </div>
+    );
+  }
 
   if (running) {
     const pct = Math.round(genProgress);

@@ -14,9 +14,17 @@ export interface EditParams {
   providerId: string;
   model?: string;
   prompt: string;
+  /** Style preset id from STYLE_PRESETS; the route composes it into the prompt. */
+  styleId?: string;
   /** Source image as a data: URL. */
   image: string;
   mode?: "img2img" | "inpaint" | "outpaint";
+  /** img2img similarity → denoising strength, 0..1. */
+  strength?: number;
+  /** Generation pixel size (scaled up from the source's display dims). */
+  width?: number;
+  height?: number;
+  seed?: number;
 }
 
 interface StreamHandlers {

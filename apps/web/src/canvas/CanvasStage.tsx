@@ -1,11 +1,13 @@
-import { useEffect, useRef } from "react";
+import { Fragment, useEffect, useRef } from "react";
 import { Layer as KonvaLayer, Stage, Transformer } from "react-konva";
 import type Konva from "konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import { useDocument } from "../stores/documentStore";
+import { useGeneration } from "../stores/generationStore";
 import { useViewport } from "../stores/viewportStore";
 import { LayerNode } from "./LayerNode";
 import { GeneratingNode } from "./GeneratingNode";
+import { WorkingOverlay } from "./WorkingOverlay";
 
 const ACCENT = "#eea145";
 
@@ -18,6 +20,7 @@ export function CanvasStage() {
   const layers = useDocument((s) => s.layers);
   const selectedId = useDocument((s) => s.selectedId);
   const select = useDocument((s) => s.select);
+  const action = useGeneration((s) => s.action);
 
   const scale = useViewport((s) => s.scale);
   const x = useViewport((s) => s.x);
@@ -92,13 +95,27 @@ export function CanvasStage() {
         onDragMove={onDragMove}
       >
         <KonvaLayer>
-          {layers.map((l) =>
-            l.status === "generating" ? (
-              <GeneratingNode key={l.id} layer={l} />
-            ) : (
-              <LayerNode key={l.id} layer={l} registerRef={registerRef} />
-            ),
-          )}
+          {(() => {
+            // Draw the working overlay directly above its anchor so layers above
+            // the source aren't dimmed by the scrim. Anchor on the source when it
+            // exists, else on the result placeholder (source hidden/deleted).
+            const sourcePresent = layers.some((x) => x.id === action?.sourceId);
+            return layers.map((l) => {
+              const overlayHere =
+                !!action &&
+                (action.sourceId === l.id || (!sourcePresent && action.placeholderId === l.id));
+              return (
+                <Fragment key={l.id}>
+                  {l.status === "generating" ? (
+                    <GeneratingNode layer={l} />
+                  ) : (
+                    <LayerNode layer={l} registerRef={registerRef} />
+                  )}
+                  {overlayHere && <WorkingOverlay />}
+                </Fragment>
+              );
+            });
+          })()}
           <Transformer
             ref={trRef}
             rotateEnabled

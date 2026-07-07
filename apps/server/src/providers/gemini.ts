@@ -74,6 +74,23 @@ function parseDataUrl(url: string): { mimeType: string; data: string } | null {
   return { mimeType: m[1] || "image/png", data: m[2] ?? "" };
 }
 
+/**
+ * Gemini has no native img2img denoising strength — `:generateContent` takes an
+ * image plus an instruction. Translate the request's strength (0 = stay close,
+ * 1 = reinvent) into phrasing so the remix similarity slider still steers it.
+ */
+function strengthInstruction(strength: number): string {
+  if (strength <= 0.2)
+    return "Stay extremely faithful to the source image — same composition and subject; apply only the changes the instruction requests.";
+  if (strength <= 0.4)
+    return "Keep the composition and subject close to the source image; apply the requested changes but refine rather than reinvent.";
+  if (strength <= 0.6)
+    return "Keep the subject and overall composition recognizable, but freely rework details, lighting, and texture to serve the instruction.";
+  if (strength <= 0.8)
+    return "Use the source image as loose inspiration — keep the subject recognizable while taking the creative liberties the instruction invites.";
+  return "Reinvent freely — treat the source as a starting point only; a bold new interpretation is welcome, guided by the instruction.";
+}
+
 /** Pull the first inline image out of a Gemini response, or throw a clean error. */
 async function readImage(res: Response): Promise<{ mimeType: string; data: string }> {
   if (!res.ok) {
@@ -201,10 +218,15 @@ export const geminiProvider: ImageProvider = {
     }
     const model = req.model?.trim() || "gemini-2.5-flash-image";
 
+    const instruction =
+      typeof req.strength === "number"
+        ? `${req.prompt}\n\n${strengthInstruction(req.strength)}`
+        : req.prompt;
+
     ctx.onProgress?.(15);
     const image = await generateContent(
       model,
-      [{ text: req.prompt }, { inlineData: { mimeType: source.mimeType, data: source.data } }],
+      [{ text: instruction }, { inlineData: { mimeType: source.mimeType, data: source.data } }],
       ctx.apiKey,
       signal,
     );

@@ -10,6 +10,43 @@ export function GeneratingNode({ layer }: { layer: Layer }) {
   const r = 24;
   const pct = Math.max(0, Math.min(100, layer.progress));
 
+  // Editor-action result: the progress ring lives on the source layer's working
+  // overlay, so the destination is just a quiet dashed frame (mockup screen 5).
+  if (layer.derivedFrom) {
+    return (
+      <Group x={layer.x} y={layer.y} listening={false}>
+        <Rect
+          width={layer.width}
+          height={layer.height}
+          cornerRadius={6}
+          stroke="rgba(238,161,69,0.55)"
+          strokeWidth={1.5}
+          dash={[7, 6]}
+        />
+        <Group x={8} y={-11}>
+          <Rect
+            width={84}
+            height={17}
+            cornerRadius={4}
+            fill="#101114"
+            stroke="rgba(238,161,69,0.3)"
+            strokeWidth={1}
+          />
+          <Text
+            x={0}
+            y={4}
+            width={84}
+            align="center"
+            text="new layer ↑"
+            fontFamily="Geist Mono Variable, monospace"
+            fontSize={9.5}
+            fill={ACCENT}
+          />
+        </Group>
+      </Group>
+    );
+  }
+
   return (
     <Group x={layer.x} y={layer.y} opacity={layer.opacity} listening={false}>
       <Rect

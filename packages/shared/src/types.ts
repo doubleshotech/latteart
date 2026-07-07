@@ -54,6 +54,9 @@ export interface EditRequest {
   providerId: string;
   model?: string;
   prompt: string;
+  negativePrompt?: string;
+  /** Style preset id from STYLE_PRESETS; the route composes it into the prompt. */
+  styleId?: string;
   /** Source image as a data: URL. */
   image: string;
   /** Mask as a data: URL (white = edit) for inpaint/outpaint. */
