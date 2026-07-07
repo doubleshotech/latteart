@@ -26,9 +26,14 @@ export function LayerNode({
     const imgAspect = img.naturalWidth / img.naturalHeight;
     const layerAspect = current.width / current.height;
     if (Math.abs(imgAspect - layerAspect) > 0.02) {
-      useDocument.getState().updateLayer(layer.id, {
-        height: Math.max(24, Math.round(current.width / imgAspect)),
-      });
+      // System adjustment, not a user edit — keep it out of the undo stack.
+      useDocument
+        .getState()
+        .updateLayer(
+          layer.id,
+          { height: Math.max(24, Math.round(current.width / imgAspect)) },
+          { history: false },
+        );
     }
   }, [img, layer.id]);
 

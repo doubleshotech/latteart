@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { record } from "./history";
 
 export type LayerStatus = "ready" | "generating";
 
@@ -48,12 +49,18 @@ export function makeLayer(partial: Partial<Layer>): Layer {
   };
 }
 
+/** Patches touching only these fields are generation plumbing (progress ticks,
+ * the final src swap) — never history entries of their own. */
+const TRANSIENT_KEYS = new Set(["status", "progress", "src"]);
+
 interface DocumentState {
   layers: Layer[];
   selectedId: string | null;
   select: (id: string | null) => void;
   addLayer: (partial: Partial<Layer>) => string;
-  updateLayer: (id: string, patch: Partial<Layer>) => void;
+  /** Pass `history: false` for system adjustments (e.g. aspect-fit) that
+   * shouldn't be undo steps. */
+  updateLayer: (id: string, patch: Partial<Layer>, opts?: { history?: boolean }) => void;
   removeLayer: (id: string) => void;
   reorder: (fromId: string, toIndex: number) => void;
   raise: (id: string, dir: "up" | "down") => void;
@@ -67,17 +74,26 @@ export const useDocument = create<DocumentState>((set) => ({
 
   addLayer: (partial) => {
     const layer = makeLayer(partial);
+    // Recorded even for generation placeholders: that entry is the "before
+    // generation" state, so one undo removes a finished generation as a unit.
+    record();
     set((s) => ({ layers: [...s.layers, layer], selectedId: layer.id }));
     return layer.id;
   },
 
-  updateLayer: (id, patch) =>
+  updateLayer: (id, patch, opts) => {
+    const keys = Object.keys(patch);
+    if (opts?.history !== false && keys.some((k) => !TRANSIENT_KEYS.has(k)))
+      record(`update:${id}:${keys.sort().join("+")}`);
     set((s) => ({
       layers: s.layers.map((l) => (l.id === id ? { ...l, ...patch } : l)),
-    })),
+    }));
+  },
 
   removeLayer: (id) =>
     set((s) => {
+      if (!s.layers.some((l) => l.id === id)) return s;
+      record();
       const layers = s.layers.filter((l) => l.id !== id);
       return {
         layers,
@@ -89,6 +105,7 @@ export const useDocument = create<DocumentState>((set) => ({
     set((s) => {
       const from = s.layers.findIndex((l) => l.id === fromId);
       if (from === -1) return s;
+      record();
       const layers = [...s.layers];
       const [moved] = layers.splice(from, 1);
       if (!moved) return s;
@@ -103,6 +120,7 @@ export const useDocument = create<DocumentState>((set) => ({
       if (i === -1) return s;
       const j = dir === "up" ? i + 1 : i - 1;
       if (j < 0 || j >= s.layers.length) return s;
+      record();
       const layers = [...s.layers];
       const a = layers[i];
       const b = layers[j];

@@ -5,6 +5,7 @@ import { LayerPanel } from "./components/LayerPanel";
 import { PromptBar } from "./components/PromptBar";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { Topbar } from "./components/Topbar";
+import { UndoRedo } from "./components/UndoRedo";
 import { ZoomControl } from "./components/ZoomControl";
 import { initProjectSync } from "./stores/projectStore";
 import { useProviders } from "./stores/providersStore";
@@ -31,6 +32,7 @@ export default function App() {
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
         <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
           <CanvasStage />
+          <UndoRedo />
           <ZoomControl />
           <PromptBar />
         </div>
