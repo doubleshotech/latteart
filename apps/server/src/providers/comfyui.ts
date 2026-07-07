@@ -118,23 +118,25 @@ function sampler(o: {
   };
 }
 
-/** Upload a data-URL image into ComfyUI's input folder; returns the name a
- * LoadImage node can reference. */
+/** Upload a data-URL image into ComfyUI's input folder under `filename`;
+ * returns the name a LoadImage node can reference. Source and mask must use
+ * distinct filenames — a shared name + overwrite would clobber one. */
 async function uploadImage(
   baseUrl: string,
   dataUrl: string,
+  filename: string,
   signal?: AbortSignal,
 ): Promise<string> {
   const m = /^data:(.*?);base64,(.*)$/s.exec(dataUrl);
-  if (!m) throw new Error("ComfyUI edit expected a base64 data URL for the source image");
+  if (!m) throw new Error("ComfyUI edit expected a base64 data URL");
   const bytes = Uint8Array.from(Buffer.from(m[2]!, "base64"));
 
   const form = new FormData();
-  form.append("image", new Blob([bytes], { type: m[1] || "image/png" }), "latteart-source.png");
+  form.append("image", new Blob([bytes], { type: m[1] || "image/png" }), filename);
   form.append("overwrite", "true");
 
   const res = await fetch(`${baseUrl}/upload/image`, { method: "POST", body: form, signal });
-  if (!res.ok) throw new Error(`ComfyUI rejected the source image upload (${res.status})`);
+  if (!res.ok) throw new Error(`ComfyUI rejected an image upload (${res.status})`);
   const out = (await res.json()) as { name: string; subfolder?: string };
   return out.subfolder ? `${out.subfolder}/${out.name}` : out.name;
 }
@@ -300,7 +302,7 @@ export const comfyuiProvider: ImageProvider = {
   label: "ComfyUI",
   kind: "local",
   requiresKey: false,
-  capabilities: { ...noCapabilities(), txt2img: true, img2img: true },
+  capabilities: { ...noCapabilities(), txt2img: true, img2img: true, inpaint: true },
 
   async listModels(): Promise<ModelInfo[]> {
     // The interface carries no connection context; live listing goes through
@@ -343,29 +345,61 @@ export const comfyuiProvider: ImageProvider = {
     };
   },
 
-  /** img2img: upload the source, encode it, and re-sample with denoise =
-   * strength (0 = stay close, 1 = reinvent) — the real thing, not a prompt
-   * paraphrase. Output keeps the source's dimensions. */
+  /**
+   * Edit an existing image. Two graphs behind one method:
+   *  - img2img: encode the source and re-sample at denoise = strength.
+   *  - inpaint (mask present): only the white-painted region is regenerated
+   *    via VAEEncodeForInpaint; the rest of the image is preserved.
+   * Both keep the source's dimensions; output lands as a new layer upstream.
+   */
   async edit(req: EditRequest, ctx: ProviderContext, signal?: AbortSignal): Promise<GenResult> {
     const baseUrl = ctx.baseUrl ?? "http://127.0.0.1:8188";
     const ckpt = await resolveCheckpoint(baseUrl, req.model);
     const seed = req.seed ?? randomSeed();
-    const denoise = Math.min(1, Math.max(0.05, req.strength ?? 0.6));
-    const imageName = await uploadImage(baseUrl, req.image, signal);
-
     const defaults = samplerDefaults(ckpt);
-    const graph = {
-      ...baseGraph(ckpt, req.prompt, req.negativePrompt ?? ""),
-      source: { class_type: "LoadImage", inputs: { image: imageName } },
-      encode: { class_type: "VAEEncode", inputs: { pixels: ["source", 0], vae: ["ckpt", 2] } },
-      sampler: sampler({
-        seed,
-        steps: defaults.steps,
-        cfg: defaults.cfg,
-        denoise,
-        latentFrom: "encode",
-      }),
-    };
+    const inpaint = req.mode === "inpaint" && typeof req.mask === "string";
+
+    const sourceName = await uploadImage(baseUrl, req.image, "latteart-source.png", signal);
+
+    let graph: Record<string, unknown>;
+    if (inpaint) {
+      // Mask: white (painted) = regenerate. Uploaded as its own file, read as a
+      // ComfyUI MASK from the red channel, then VAEEncodeForInpaint noises only
+      // that region. Full denoise so the fill is fresh; grow softens the seam.
+      const maskName = await uploadImage(baseUrl, req.mask!, "latteart-mask.png", signal);
+      const denoise = Math.min(1, Math.max(0.2, req.strength ?? 1));
+      graph = {
+        ...baseGraph(ckpt, req.prompt, req.negativePrompt ?? ""),
+        source: { class_type: "LoadImage", inputs: { image: sourceName } },
+        maskimg: { class_type: "LoadImage", inputs: { image: maskName } },
+        mask: { class_type: "ImageToMask", inputs: { image: ["maskimg", 0], channel: "red" } },
+        encode: {
+          class_type: "VAEEncodeForInpaint",
+          inputs: { pixels: ["source", 0], vae: ["ckpt", 2], mask: ["mask", 0], grow_mask_by: 6 },
+        },
+        sampler: sampler({
+          seed,
+          steps: defaults.steps,
+          cfg: defaults.cfg,
+          denoise,
+          latentFrom: "encode",
+        }),
+      };
+    } else {
+      const denoise = Math.min(1, Math.max(0.05, req.strength ?? 0.6));
+      graph = {
+        ...baseGraph(ckpt, req.prompt, req.negativePrompt ?? ""),
+        source: { class_type: "LoadImage", inputs: { image: sourceName } },
+        encode: { class_type: "VAEEncode", inputs: { pixels: ["source", 0], vae: ["ckpt", 2] } },
+        sampler: sampler({
+          seed,
+          steps: defaults.steps,
+          cfg: defaults.cfg,
+          denoise,
+          latentFrom: "encode",
+        }),
+      };
+    }
 
     const dataUrls = await runGraph(baseUrl, graph, ctx, signal);
     return {

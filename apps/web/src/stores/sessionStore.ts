@@ -32,6 +32,8 @@ interface SessionState {
   settingsOpen: boolean;
   /** Open drill-in in the layer panel (Remix / Change background / Variations). */
   actionView: ActionView | null;
+  /** Edit-area (inpaint) mask editor over the canvas, for a given source layer. */
+  maskEdit: { sourceId: string } | null;
   setProvider: (id: string, model?: string | null) => void;
   setModel: (model: string) => void;
   setSize: (s: SizePreset) => void;
@@ -40,6 +42,8 @@ interface SessionState {
   closeSettings: () => void;
   openAction: (kind: ActionViewKind, sourceId: string) => void;
   closeAction: () => void;
+  openMaskEdit: (sourceId: string) => void;
+  closeMaskEdit: () => void;
 }
 
 export const useSession = create<SessionState>((set) => ({
@@ -49,12 +53,15 @@ export const useSession = create<SessionState>((set) => ({
   styleId: "none",
   settingsOpen: false,
   actionView: null,
+  maskEdit: null,
   setProvider: (id, model) => set({ providerId: id, model: model ?? null }),
   setModel: (model) => set({ model }),
   setSize: (size) => set({ size }),
   setStyle: (styleId) => set({ styleId }),
   openSettings: () => set({ settingsOpen: true }),
   closeSettings: () => set({ settingsOpen: false }),
-  openAction: (kind, sourceId) => set({ actionView: { kind, sourceId } }),
+  openAction: (kind, sourceId) => set({ actionView: { kind, sourceId }, maskEdit: null }),
   closeAction: () => set({ actionView: null }),
+  openMaskEdit: (sourceId) => set({ maskEdit: { sourceId }, actionView: null }),
+  closeMaskEdit: () => set({ maskEdit: null }),
 }));

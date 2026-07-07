@@ -87,7 +87,7 @@ export const mockProvider: ImageProvider = {
   label: "Mock",
   kind: "local",
   requiresKey: false,
-  capabilities: { ...noCapabilities(), txt2img: true, img2img: true },
+  capabilities: { ...noCapabilities(), txt2img: true, img2img: true, inpaint: true },
 
   async listModels(): Promise<ModelInfo[]> {
     return [{ id: "mock-diffusion", label: "Mock Diffusion" }];

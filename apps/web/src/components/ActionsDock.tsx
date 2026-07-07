@@ -131,11 +131,20 @@ export function ActionsDock({ layer }: { layer: Layer }) {
   const running = useGeneration((s) => s.running);
   const runAction = useGeneration((s) => s.runAction);
 
+  const openMaskEdit = useSession((s) => s.openMaskEdit);
+
   const active = providers.find((p) => p.id === providerId);
   const canEdit = !!active?.available && active.capabilities.img2img && !running;
   // Provider is keyed but can't do img2img — disable the actions (guard still
   // redirects unkeyed providers to Settings); the wrapper title explains why.
   const noImg2img = !!active?.available && !active.capabilities.img2img;
+  // Edit area additionally needs a mask-capable (inpaint) provider.
+  const canInpaint = !!active?.available && !!active.capabilities.inpaint;
+  const inpaintTitle = !active?.available
+    ? "Connect a provider in Settings"
+    : !active.capabilities.inpaint
+      ? `${active.label} can't inpaint — try ComfyUI`
+      : undefined;
   const editBlockedTitle = !active?.available
     ? "Connect a provider with a key in Settings"
     : !active.capabilities.img2img
@@ -289,36 +298,18 @@ export function ActionsDock({ layer }: { layer: Layer }) {
           disabled={running || noImg2img}
           onClick={guard(() => openAction("variations", layer.id))}
         />
-        {/* Edit area — reserved slot, needs a mask-capable provider (v2) */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            height: 38,
-            padding: "0 10px 0 7px",
-            borderRadius: 8,
-            color: "var(--text-faint)",
-            cursor: "not-allowed",
-          }}
-        >
-          <span style={{ ...iconBox(false), color: "var(--text-faint)" }}>
-            <SquareDashed size={15} strokeWidth={1.6} />
-          </span>
-          <span style={{ flex: 1, fontSize: 12.5 }}>Edit area</span>
-          <span
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 9,
-              padding: "1px 6px",
-              borderRadius: 5,
-              background: "var(--surface-2)",
-              border: "1px solid var(--border)",
-              color: "var(--text-faint)",
-            }}
-          >
-            v2 · needs mask
-          </span>
+        {/* Edit area — inpaint; needs a mask-capable provider */}
+        <div title={inpaintTitle}>
+          <ActionRow
+            icon={<SquareDashed size={15} strokeWidth={1.6} />}
+            label="Edit area"
+            tag="inpaint"
+            drillIn
+            disabled={running || !canInpaint}
+            onClick={guard(() => {
+              if (canInpaint) openMaskEdit(layer.id);
+            })}
+          />
         </div>
       </div>
 

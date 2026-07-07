@@ -18,6 +18,8 @@ export interface EditParams {
   styleId?: string;
   /** Source image as a data: URL. */
   image: string;
+  /** Inpaint mask as a data: URL (white = regenerate); matches the source's pixels. */
+  mask?: string;
   mode?: "img2img" | "inpaint" | "outpaint";
   /** img2img similarity → denoising strength, 0..1. */
   strength?: number;

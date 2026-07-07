@@ -67,12 +67,14 @@ interface GenerationState {
     model?: string;
     kind: ActionKind;
     sourceId: string;
-    /** Remix / change-bg user prompt; ignored for remove-bg and variations. */
+    /** Remix / change-bg / edit-area user prompt; ignored for remove-bg and variations. */
     prompt?: string;
     /** Remix style override; the /api/edit route composes it server-side. */
     styleId?: string;
     /** img2img similarity → denoising strength, 0..1. */
     strength?: number;
+    /** Inpaint mask (white = regenerate) as a data: URL — edit-area only. */
+    mask?: string;
     /** Toast subline, e.g. "img2img · Gemini · quite similar". */
     detail?: string;
     count?: number;
@@ -233,6 +235,7 @@ export const useGeneration = create<GenerationState>((set, get) => {
       prompt,
       styleId,
       strength,
+      mask,
       detail,
       count = 1,
     }) => {
@@ -307,7 +310,9 @@ export const useGeneration = create<GenerationState>((set, get) => {
                   prompt: editPrompt,
                   styleId: kind === "remix" ? styleId : undefined,
                   image,
-                  mode: "img2img",
+                  mode: kind === "edit-area" ? "inpaint" : "img2img",
+                  // Mask rides along only for inpaint; matches the source's pixels.
+                  mask: kind === "edit-area" ? mask : undefined,
                   strength,
                   width: rw,
                   height: rh,

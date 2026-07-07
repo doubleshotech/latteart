@@ -81,8 +81,8 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     kind: "local",
     blurb: "SD / SDXL / FLUX checkpoints, on-device",
     requiresKey: false,
-    // v1 drives fixed txt2img/img2img graphs; inpaint+ come with mask editing.
-    capabilities: caps({ txt2img: true, img2img: true }),
+    // v1 drives fixed txt2img / img2img / inpaint graphs; outpaint+ later.
+    capabilities: caps({ txt2img: true, img2img: true, inpaint: true }),
     // Models are the instance's installed checkpoints — the providers route
     // fills this live; nothing meaningful to declare statically.
     models: [],
@@ -100,7 +100,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     kind: "local",
     blurb: "Offline placeholder generator · no key needed",
     requiresKey: false,
-    capabilities: caps({ txt2img: true, img2img: true }),
+    capabilities: caps({ txt2img: true, img2img: true, inpaint: true }),
     models: [{ id: "mock-diffusion", label: "Mock Diffusion" }],
     implemented: true,
   },

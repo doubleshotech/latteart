@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { CanvasStage } from "./canvas/CanvasStage";
 import { ErrorToast } from "./components/ErrorToast";
 import { LayerPanel } from "./components/LayerPanel";
+import { MaskEditor } from "./components/MaskEditor";
 import { PromptBar } from "./components/PromptBar";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { Topbar } from "./components/Topbar";
@@ -35,6 +36,7 @@ export default function App() {
           <UndoRedo />
           <ZoomControl />
           <PromptBar />
+          <MaskEditor />
         </div>
         <LayerPanel />
       </div>

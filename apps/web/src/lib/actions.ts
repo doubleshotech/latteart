@@ -1,7 +1,15 @@
-import { Eraser, Image as ImageIcon, LayoutGrid, Repeat2, type LucideIcon } from "lucide-react";
+import {
+  Eraser,
+  Image as ImageIcon,
+  LayoutGrid,
+  Repeat2,
+  SquareDashed,
+  type LucideIcon,
+} from "lucide-react";
 
-/** Editor actions that run img2img against a single source layer. */
-export type ActionKind = "remix" | "remove-bg" | "change-bg" | "variations";
+/** Editor actions that run against a single source layer (img2img, or inpaint
+ * for edit-area). */
+export type ActionKind = "remix" | "remove-bg" | "change-bg" | "variations" | "edit-area";
 
 /** Single source of truth for per-action copy, icons, and prompt composition. */
 export interface ActionMeta {
@@ -61,5 +69,14 @@ export const ACTIONS: Record<ActionKind, ActionMeta> = {
       "composition, but reinterpret the details so it reads as a fresh take.",
     layerName: (sourceName, index, count) =>
       count > 1 ? `Variation ${index + 1} of ${sourceName}` : `Variation of ${sourceName}`,
+  },
+  "edit-area": {
+    icon: SquareDashed,
+    label: "Edit area",
+    title: ({ sourceName }) => `Editing area of “${sourceName}”…`,
+    canvasLabel: "EDITING AREA",
+    // Inpaint: the composed prompt describes what fills the masked region.
+    prompt: (userPrompt) => userPrompt,
+    layerName: (sourceName) => `${sourceName} — edited area`,
   },
 };
