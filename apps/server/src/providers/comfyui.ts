@@ -22,8 +22,23 @@ import type {
 
 const DEFAULT_STEPS = 20;
 const DEFAULT_CFG = 7;
+// Short: the availability probe on /api/providers must never stall the list.
 const PROBE_TIMEOUT_MS = 800;
+// Generous: resolving a checkpoint on the generation path — a busy or
+// cold-starting-but-reachable instance can answer /object_info slowly, and
+// failing that with "isn't reachable" would be a lie.
+const RESOLVE_TIMEOUT_MS = 20_000;
 const CONNECT_TIMEOUT_MS = 4000;
+// Backstop for a stalled run (a deadlocked node, or a completion event missed
+// on the socket): if no message of any kind arrives for this long, give up
+// rather than hang the SSE request forever. Reset on every message, so a
+// legitimately long generation that keeps emitting progress never trips it.
+const RUN_IDLE_TIMEOUT_MS = 180_000;
+
+/** Raster mimes ComfyUI's LoadImage (PIL) can decode. SVG (e.g. Mock output)
+ * cannot, so we reject it up front with a clear message instead of an opaque
+ * node error. */
+const DECODABLE_SOURCE = /^data:image\/(png|jpeg|jpg|webp|gif|bmp|tiff);base64,/i;
 
 /** Few-step distilled checkpoints (Turbo/Lightning/Hyper/schnell) need very
  * low step counts and cfg ≈ 1 — classic defaults burn their output. Detected
@@ -53,10 +68,13 @@ function checkpointLabel(file: string): string {
  * by `/api/providers` to publish live models (and availability) — bounded by
  * a short timeout so a stopped ComfyUI never stalls the providers list.
  */
-export async function listComfyCheckpoints(baseUrl: string): Promise<ModelInfo[] | null> {
+export async function listComfyCheckpoints(
+  baseUrl: string,
+  timeoutMs = PROBE_TIMEOUT_MS,
+): Promise<ModelInfo[] | null> {
   try {
     const res = await fetch(`${baseUrl}/object_info/CheckpointLoaderSimple`, {
-      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) return null;
     const data = (await res.json()) as {
@@ -70,9 +88,11 @@ export async function listComfyCheckpoints(baseUrl: string): Promise<ModelInfo[]
 }
 
 /** Resolve the checkpoint to run: the requested one if installed, else the
- * first installed one (sessions can carry a since-deleted checkpoint name). */
+ * first installed one (sessions can carry a since-deleted checkpoint name).
+ * Uses the generous generation-path timeout so a slow-but-reachable instance
+ * doesn't fail the whole run with a misleading "isn't reachable". */
 async function resolveCheckpoint(baseUrl: string, requested?: string): Promise<string> {
-  const models = await listComfyCheckpoints(baseUrl);
+  const models = await listComfyCheckpoints(baseUrl, RESOLVE_TIMEOUT_MS);
   if (models === null) throw unreachable(baseUrl);
   if (models.length === 0)
     throw new Error("ComfyUI has no checkpoints installed — add one to models/checkpoints");
@@ -156,6 +176,7 @@ function openSocket(baseUrl: string, clientId: string): Promise<WebSocket> {
     });
     ws.addEventListener("error", () => {
       clearTimeout(timer);
+      ws.close();
       reject(unreachable(baseUrl));
     });
   });
@@ -192,14 +213,106 @@ async function runGraph(
 ): Promise<string[]> {
   const clientId = crypto.randomUUID();
   const ws = await openSocket(baseUrl, clientId);
+  // Filter socket messages to this job once its id is known. Assigned after the
+  // queue POST; before then only our own clientId's messages reach this socket.
+  let promptId: string | undefined;
 
   try {
+    // Wire up completion BEFORE queuing. WebSocket messages are not buffered for
+    // a listener attached later, so a cached/instant graph that finishes between
+    // the POST and a later addEventListener would otherwise be missed and hang.
+    const completion = new Promise<void>((resolve, reject) => {
+      let idle: ReturnType<typeof setTimeout>;
+      const abortError = () => {
+        const err = new Error("canceled");
+        err.name = "AbortError";
+        return err;
+      };
+      const cleanup = () => {
+        clearTimeout(idle);
+        ws.removeEventListener("message", onMessage);
+        ws.removeEventListener("close", onClose);
+        signal?.removeEventListener("abort", onAbort);
+      };
+      const done = (fn: () => void) => {
+        cleanup();
+        fn();
+      };
+      const armIdle = () => {
+        clearTimeout(idle);
+        idle = setTimeout(
+          () => done(() => reject(new Error("ComfyUI stopped responding"))),
+          RUN_IDLE_TIMEOUT_MS,
+        );
+      };
+      function onAbort() {
+        // Only scope the queue delete to this job; /interrupt is global, so only
+        // fire it once we own the running slot (promptId known).
+        if (promptId !== undefined) {
+          void fetch(`${baseUrl}/interrupt`, { method: "POST" }).catch(() => {});
+          void fetch(`${baseUrl}/queue`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ delete: [promptId] }),
+          }).catch(() => {});
+        }
+        done(() => reject(abortError()));
+      }
+      function onClose() {
+        done(() => reject(new Error("Lost connection to ComfyUI")));
+      }
+      function onMessage(event: MessageEvent) {
+        if (typeof event.data !== "string") return; // binary preview frames — later
+        let msg: { type: string; data?: Record<string, unknown> };
+        try {
+          msg = JSON.parse(event.data) as typeof msg;
+        } catch {
+          return;
+        }
+        const d = msg.data ?? {};
+        if (promptId !== undefined && d.prompt_id !== undefined && d.prompt_id !== promptId) return;
+        armIdle();
+
+        if (msg.type === "progress" && typeof d.value === "number" && typeof d.max === "number") {
+          ctx.onProgress?.(Math.round((d.value / Math.max(1, d.max)) * 100), {
+            step: d.value,
+            totalSteps: d.max,
+          });
+        } else if (
+          msg.type === "execution_success" ||
+          (msg.type === "executing" && d.node === null)
+        ) {
+          done(resolve);
+        } else if (msg.type === "execution_error") {
+          const detail =
+            typeof d.exception_message === "string"
+              ? d.exception_message
+              : "ComfyUI execution failed";
+          done(() => reject(new Error(detail)));
+        } else if (msg.type === "execution_interrupted") {
+          done(() => reject(abortError()));
+        }
+      }
+
+      if (signal?.aborted) return onAbort();
+      signal?.addEventListener("abort", onAbort, { once: true });
+      ws.addEventListener("message", onMessage);
+      ws.addEventListener("close", onClose);
+      armIdle(); // covers "queued but never starts executing"
+    });
+    // If we bail before awaiting completion (e.g. the POST fails), the finally's
+    // ws.close() triggers onClose → reject; mark it handled so it isn't an
+    // unhandled rejection. The real await below still sees the rejection.
+    completion.catch(() => {});
+
     const queued = await fetch(`${baseUrl}/prompt`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ prompt: graph, client_id: clientId }),
       signal,
-    }).catch(() => {
+    }).catch((err: Error) => {
+      // Preserve a cancel; only a genuine connection failure is "unreachable".
+      if (signal?.aborted || err?.name === "AbortError") throw err;
       throw unreachable(baseUrl);
     });
     if (!queued.ok) {
@@ -216,60 +329,10 @@ async function runGraph(
       }
       throw new Error(message);
     }
-    const { prompt_id: promptId } = (await queued.json()) as { prompt_id: string };
+    promptId = ((await queued.json()) as { prompt_id: string }).prompt_id;
 
-    // Wait for completion, forwarding sampler steps as progress. Cancel =
-    // interrupt the executing job and drop it from the queue.
-    await new Promise<void>((resolve, reject) => {
-      const onAbort = () => {
-        void fetch(`${baseUrl}/interrupt`, { method: "POST" }).catch(() => {});
-        void fetch(`${baseUrl}/queue`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ delete: [promptId] }),
-        }).catch(() => {});
-        const err = new Error("canceled");
-        err.name = "AbortError";
-        reject(err);
-      };
-      if (signal?.aborted) return onAbort();
-      signal?.addEventListener("abort", onAbort, { once: true });
-
-      ws.addEventListener("message", (event) => {
-        if (typeof event.data !== "string") return; // binary preview frames — later
-        let msg: { type: string; data?: Record<string, unknown> };
-        try {
-          msg = JSON.parse(event.data) as typeof msg;
-        } catch {
-          return;
-        }
-        const d = msg.data ?? {};
-        if (d.prompt_id !== undefined && d.prompt_id !== promptId) return;
-
-        if (msg.type === "progress" && typeof d.value === "number" && typeof d.max === "number") {
-          ctx.onProgress?.(Math.round((d.value / Math.max(1, d.max)) * 100), {
-            step: d.value,
-            totalSteps: d.max,
-          });
-        } else if (
-          msg.type === "execution_success" ||
-          (msg.type === "executing" && d.node === null)
-        ) {
-          resolve();
-        } else if (msg.type === "execution_error") {
-          const detail =
-            typeof d.exception_message === "string"
-              ? d.exception_message
-              : "ComfyUI execution failed";
-          reject(new Error(detail));
-        } else if (msg.type === "execution_interrupted") {
-          const err = new Error("canceled");
-          err.name = "AbortError";
-          reject(err);
-        }
-      });
-      ws.addEventListener("close", () => reject(new Error("Lost connection to ComfyUI")));
-    });
+    // Wait for completion, forwarding sampler steps as progress along the way.
+    await completion;
 
     // History can lag a beat behind the success event.
     for (let attempt = 0; ; attempt++) {
@@ -354,6 +417,10 @@ export const comfyuiProvider: ImageProvider = {
    */
   async edit(req: EditRequest, ctx: ProviderContext, signal?: AbortSignal): Promise<GenResult> {
     const baseUrl = ctx.baseUrl ?? "http://127.0.0.1:8188";
+    // ComfyUI's LoadImage can't decode SVG (e.g. a Mock-generated layer); reject
+    // it clearly rather than letting the graph fail with an opaque node error.
+    if (!DECODABLE_SOURCE.test(req.image))
+      throw new Error("ComfyUI can't edit this layer — its image isn't a raster (PNG/JPEG/WebP).");
     const ckpt = await resolveCheckpoint(baseUrl, req.model);
     const seed = req.seed ?? randomSeed();
     const defaults = samplerDefaults(ckpt);

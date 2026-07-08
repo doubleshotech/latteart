@@ -30,27 +30,40 @@ const PROJECTS_DIR = join(DATA_DIR, "projects");
 /** v1: a single implicit project. */
 export const DEFAULT_PROJECT_ID = "default";
 
-// Every format an image provider realistically returns (the mock provider
-// emits SVG). An unknown mime drops the layer's pixels on save — extend the
-// table rather than letting that happen.
+// Canonical mime↔ext pairs where the extension isn't just the subtype (jpeg,
+// svg+xml). Any other image/* mime falls back to a sanitized subtype so its
+// pixels are preserved rather than silently dropped on save.
 const MIME_TO_EXT: Record<string, string> = {
-  "image/png": "png",
   "image/jpeg": "jpg",
-  "image/webp": "webp",
-  "image/gif": "gif",
-  "image/avif": "avif",
   "image/svg+xml": "svg",
 };
 const EXT_TO_MIME: Record<string, string> = {
-  png: "image/png",
   jpg: "image/jpeg",
-  webp: "image/webp",
-  gif: "image/gif",
-  avif: "image/avif",
   svg: "image/svg+xml",
 };
 
-const DATA_URL_RE = /^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/i;
+/** Extension for a mime — canonical map first, else a sanitized image/* subtype
+ * (so an unlisted-but-valid raster like image/bmp round-trips instead of being
+ * dropped). Null only for a non-image or unparseable mime. */
+function mimeToExt(mime: string): string | null {
+  const m = mime.toLowerCase();
+  if (MIME_TO_EXT[m]) return MIME_TO_EXT[m]!;
+  const sub = /^image\/([a-z0-9.+-]+)$/.exec(m)?.[1];
+  const ext = sub?.replace(/[^a-z0-9]/g, "");
+  return ext || null;
+}
+
+/** Mime for a stored extension — inverse of mimeToExt. */
+function extToMime(ext: string): string {
+  return EXT_TO_MIME[ext] ?? `image/${ext}`;
+}
+
+// Tolerates optional data-URL parameters (e.g. `;charset=utf-8`) and whitespace
+// in the base64 body (line-wrapped payloads) — either would otherwise fail the
+// match and drop the layer's pixels. Buffer.from ignores the whitespace when
+// decoding.
+const DATA_URL_RE =
+  /^data:([a-z0-9.+-]+\/[a-z0-9.+-]+)(?:;[a-z0-9.+-]+=[^;,]*)*;base64,([\sA-Za-z0-9+/=]+)$/i;
 const ASSET_REF_RE = /^asset:([a-f0-9]{64}\.[a-z0-9]+)$/;
 
 function projectDir(id: string): string {
@@ -61,7 +74,7 @@ function projectDir(id: string): string {
 function writeAsset(assetsDir: string, dataUrl: string): string | null {
   const m = DATA_URL_RE.exec(dataUrl);
   if (!m) return null;
-  const ext = MIME_TO_EXT[m[1]!.toLowerCase()];
+  const ext = mimeToExt(m[1]!);
   if (!ext) return null;
   const bytes = Buffer.from(m[2]!, "base64");
   const file = `${createHash("sha256").update(bytes).digest("hex")}.${ext}`;
@@ -142,7 +155,7 @@ export function loadProject(id: string): ProjectDoc | null {
     const file = m[1]!;
     try {
       const bytes = readFileSync(join(assetsDir, file));
-      const mime = EXT_TO_MIME[file.split(".").at(-1)!] ?? "image/png";
+      const mime = extToMime(file.split(".").at(-1)!);
       return { ...l, src: `data:${mime};base64,${bytes.toString("base64")}` };
     } catch {
       // Asset vanished — keep the layer (name/prompt survive), drop the pixels.

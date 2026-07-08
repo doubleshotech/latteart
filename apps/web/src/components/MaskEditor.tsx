@@ -153,12 +153,22 @@ function Editor({ source }: { source: Layer }) {
 
   const onPointerMove = (e: React.PointerEvent) => {
     if (!drawingRef.current) return;
+    const cur = strokesRef.current.at(-1);
+    // The active stroke can vanish if Clear ran mid-gesture (e.g. after a
+    // pointercancel left drawing armed) — end the gesture instead of throwing.
+    if (!cur) {
+      drawingRef.current = false;
+      return;
+    }
     const p = toNative(e);
-    strokesRef.current.at(-1)!.points.push({ x: p.x, y: p.y });
+    cur.points.push({ x: p.x, y: p.y });
     redraw();
   };
 
-  const onPointerUp = () => {
+  // pointerup, and also pointercancel / lost-capture (touch interruption, a
+  // gesture stealing the pointer) — otherwise drawingRef stays armed and the
+  // next move extends a stray stroke.
+  const endStroke = () => {
     drawingRef.current = false;
   };
 
@@ -302,7 +312,9 @@ function Editor({ source }: { source: Layer }) {
               ref={canvasRef}
               onPointerDown={onPointerDown}
               onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
+              onPointerUp={endStroke}
+              onPointerCancel={endStroke}
+              onLostPointerCapture={endStroke}
               style={{
                 position: "absolute",
                 inset: 0,

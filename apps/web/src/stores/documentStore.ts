@@ -53,11 +53,19 @@ export function makeLayer(partial: Partial<Layer>): Layer {
  * the final src swap) — never history entries of their own. */
 const TRANSIENT_KEYS = new Set(["status", "progress", "src"]);
 
+/** Fields driven by a continuous control (the opacity slider) whose stream of
+ * updates should collapse into a single undo entry. Discrete gestures (drag,
+ * transform, rename) are NOT here, so each stands alone — two quick drags of
+ * one layer don't coalesce into one undo. */
+const CONTINUOUS_KEYS = new Set(["opacity"]);
+
 interface DocumentState {
   layers: Layer[];
   selectedId: string | null;
   select: (id: string | null) => void;
-  addLayer: (partial: Partial<Layer>) => string;
+  /** Pass `history: false` to add without its own undo entry — the caller
+   * records one entry for the whole batch (e.g. a multi-variation run). */
+  addLayer: (partial: Partial<Layer>, opts?: { history?: boolean }) => string;
   /** Pass `history: false` for system adjustments (e.g. aspect-fit) that
    * shouldn't be undo steps. */
   updateLayer: (id: string, patch: Partial<Layer>, opts?: { history?: boolean }) => void;
@@ -66,25 +74,38 @@ interface DocumentState {
   raise: (id: string, dir: "up" | "down") => void;
 }
 
-export const useDocument = create<DocumentState>((set) => ({
+export const useDocument = create<DocumentState>((set, get) => ({
   layers: [],
   selectedId: null,
 
   select: (id) => set({ selectedId: id }),
 
-  addLayer: (partial) => {
+  addLayer: (partial, opts) => {
     const layer = makeLayer(partial);
     // Recorded even for generation placeholders: that entry is the "before
     // generation" state, so one undo removes a finished generation as a unit.
-    record();
+    if (opts?.history !== false) record();
     set((s) => ({ layers: [...s.layers, layer], selectedId: layer.id }));
     return layer.id;
   },
 
   updateLayer: (id, patch, opts) => {
-    const keys = Object.keys(patch);
-    if (opts?.history !== false && keys.some((k) => !TRANSIENT_KEYS.has(k)))
-      record(`update:${id}:${keys.sort().join("+")}`);
+    if (opts?.history !== false) {
+      const layer = get().layers.find((l) => l.id === id);
+      // Record only when a non-transient field's value actually changes — a
+      // no-op patch (e.g. blur-rename to the same name) must not clear the redo
+      // stack via record()'s future = [].
+      const changed = Object.keys(patch).filter(
+        (k) =>
+          !TRANSIENT_KEYS.has(k) && layer && layer[k as keyof Layer] !== patch[k as keyof Layer],
+      );
+      if (changed.length > 0) {
+        const coalesce = changed.every((k) => CONTINUOUS_KEYS.has(k))
+          ? `update:${id}:${changed.sort().join("+")}`
+          : undefined;
+        record(coalesce);
+      }
+    }
     set((s) => ({
       layers: s.layers.map((l) => (l.id === id ? { ...l, ...patch } : l)),
     }));

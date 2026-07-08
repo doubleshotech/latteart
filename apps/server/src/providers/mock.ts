@@ -87,7 +87,11 @@ export const mockProvider: ImageProvider = {
   label: "Mock",
   kind: "local",
   requiresKey: false,
-  capabilities: { ...noCapabilities(), txt2img: true, img2img: true, inpaint: true },
+  // No inpaint: mock can't honor a mask (it emits a fresh placeholder), so it
+  // must not advertise a capability its edit() doesn't implement — otherwise
+  // Edit area on the default provider looks broken. Needs a real inpaint
+  // provider (ComfyUI).
+  capabilities: { ...noCapabilities(), txt2img: true, img2img: true },
 
   async listModels(): Promise<ModelInfo[]> {
     return [{ id: "mock-diffusion", label: "Mock Diffusion" }];

@@ -138,8 +138,10 @@ export function ActionsDock({ layer }: { layer: Layer }) {
   // Provider is keyed but can't do img2img — disable the actions (guard still
   // redirects unkeyed providers to Settings); the wrapper title explains why.
   const noImg2img = !!active?.available && !active.capabilities.img2img;
-  // Edit area additionally needs a mask-capable (inpaint) provider.
-  const canInpaint = !!active?.available && !!active.capabilities.inpaint;
+  // Edit area needs a mask-capable (inpaint) provider — a separate capability
+  // from img2img, so it must NOT be gated on canEdit/guard() below.
+  const canInpaint = !!active?.available && !!active.capabilities.inpaint && !running;
+  const noInpaint = !!active?.available && !active.capabilities.inpaint;
   const inpaintTitle = !active?.available
     ? "Connect a provider in Settings"
     : !active.capabilities.inpaint
@@ -298,17 +300,23 @@ export function ActionsDock({ layer }: { layer: Layer }) {
           disabled={running || noImg2img}
           onClick={guard(() => openAction("variations", layer.id))}
         />
-        {/* Edit area — inpaint; needs a mask-capable provider */}
+        {/* Edit area — inpaint; needs a mask-capable provider. Enabled when no
+            provider is connected so it can route to Settings like its siblings;
+            disabled only when a connected provider can't inpaint. */}
         <div title={inpaintTitle}>
           <ActionRow
             icon={<SquareDashed size={15} strokeWidth={1.6} />}
             label="Edit area"
             tag="inpaint"
             drillIn
-            disabled={running || !canInpaint}
-            onClick={guard(() => {
+            disabled={running || noInpaint}
+            onClick={() => {
+              if (!active?.available) {
+                openSettings();
+                return;
+              }
               if (canInpaint) openMaskEdit(layer.id);
-            })}
+            }}
           />
         </div>
       </div>

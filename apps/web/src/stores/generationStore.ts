@@ -271,18 +271,27 @@ export const useGeneration = create<GenerationState>((set, get) => {
 
           // The result lands as a new layer offset above the source (screen 5).
           // Create it first so the action can anchor its progress UI on it.
-          const layerId = doc.addLayer({
-            name: ACTIONS[kind].layerName(live.name, i, jobs),
-            x: live.x + 46 + i * 22,
-            y: live.y - 36 + i * 22,
-            width: live.width,
-            height: live.height,
-            src: null,
-            status: "generating",
-            progress: 0,
-            prompt: kind === "variations" ? live.prompt : userPrompt || live.prompt,
-            derivedFrom: { id: live.id, name: live.name },
-          });
+          const editArea = kind === "edit-area";
+          const layerId = doc.addLayer(
+            {
+              name: ACTIONS[kind].layerName(live.name, i, jobs),
+              // Edit-area (inpaint) returns a full image whose unedited regions
+              // must line up with the source, so overlay it exactly in place;
+              // other actions offset the result above the source.
+              x: live.x + (editArea ? 0 : 46 + i * 22),
+              y: live.y + (editArea ? 0 : -36 + i * 22),
+              width: live.width,
+              height: live.height,
+              src: null,
+              status: "generating",
+              progress: 0,
+              prompt: kind === "variations" ? live.prompt : userPrompt || live.prompt,
+              derivedFrom: { id: live.id, name: live.name },
+            },
+            // A multi-job run (variations) is one undo unit: only the first
+            // placeholder records the pre-run snapshot; the rest add silently.
+            { history: i === 0 },
+          );
 
           set({
             action: {
