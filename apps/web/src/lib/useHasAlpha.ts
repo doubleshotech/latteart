@@ -21,6 +21,11 @@ export function useHasAlpha(img: HTMLImageElement | null, src: string | null): b
       setHasAlpha(known);
       return;
     }
+    // `img` can briefly be the previous src's image while the new one loads
+    // (useImage keeps the old to avoid flicker; an in-place src swap triggers
+    // this). Detecting against it would cache a wrong answer under the new src,
+    // so wait until the loaded image actually matches src.
+    if (img.src !== src) return;
     const result = detectAlpha(img);
     cache.set(src, result);
     setHasAlpha(result);

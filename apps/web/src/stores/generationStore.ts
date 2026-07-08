@@ -25,6 +25,12 @@ function requestSize(w: number, h: number, maxSide = 1024) {
     : { rw: Math.round(maxSide * r), rh: maxSide };
 }
 
+/** Appended to a generation when "Cutout" is on: steer the model toward a flat,
+ * shadow-free subject that the auto-removal step below can key out cleanly. */
+const ISOLATE_INSTRUCTION =
+  "Show only the main subject, fully isolated on a plain, solid, evenly-lit " +
+  "background with no scenery, props, or cast shadows — a clean studio cut-out.";
+
 /** Default instruction for AI Merge — harmonize the flattened canvas into one image. */
 const MERGE_PROMPT =
   "Merge these overlapping elements into a single cohesive, naturally-lit image. " +
@@ -60,6 +66,9 @@ interface GenerationState {
     styleId?: string;
     width: number;
     height: number;
+    /** Generate the subject on a flat background, then auto-remove it so the
+     * layer lands transparent and composes cleanly (the "Cutout" toggle). */
+    isolate?: boolean;
   }) => Promise<void>;
   merge: (opts: { providerId: string; model?: string; prompt?: string }) => Promise<void>;
   runAction: (opts: {
@@ -146,6 +155,88 @@ export const useGeneration = create<GenerationState>((set, get) => {
     }
   };
 
+  /**
+   * Second phase of an isolated generation: strip the flat background off the
+   * just-generated layer, in place. The subject stays visible under a working
+   * scrim (status ready), its `src` swaps to the transparent cut-out on done.
+   * A failure or cancel keeps the opaque generation — still a usable result —
+   * rather than dropping the layer the way a fresh generation would.
+   */
+  const autoCutout = async (
+    layerId: string,
+    image: string,
+    providerId: string,
+    model: string | undefined,
+    width: number,
+    height: number,
+  ) => {
+    const layer = useDocument.getState().layers.find((l) => l.id === layerId);
+    if (!layer) return;
+
+    const controller = new AbortController();
+    set({
+      running: true,
+      controller,
+      error: null,
+      // Anchor the on-canvas working ring + toast on the layer itself; the ring
+      // reads placeholder.progress, so placeholderId === the layer being cut out.
+      action: {
+        kind: "remove-bg",
+        sourceId: layerId,
+        sourceName: layer.name,
+        placeholderId: layerId,
+        detail: "isolate · removing background",
+        count: 1,
+        index: 0,
+      },
+    });
+    useDocument.getState().updateLayer(layerId, { progress: 0 }, { history: false });
+
+    try {
+      await streamEdit(
+        {
+          providerId,
+          model,
+          prompt: ACTIONS["remove-bg"].prompt(""),
+          image,
+          mode: "remove-bg",
+          width,
+          height,
+        },
+        {
+          signal: controller.signal,
+          onEvent: (e) => {
+            const d = useDocument.getState();
+            if (e.type === "progress") {
+              d.updateLayer(layerId, { progress: e.pct }, { history: false });
+            } else if (e.type === "done") {
+              const img = e.result.images[0];
+              // In-place swap: same layer, now transparent. Kept out of history
+              // so one undo removes the whole isolated generation as a unit.
+              d.updateLayer(
+                layerId,
+                { src: img?.dataUrl ?? image, progress: 100 },
+                {
+                  history: false,
+                },
+              );
+            } else if (e.type === "error") {
+              d.updateLayer(layerId, { progress: 100 }, { history: false });
+              set({ error: e.message });
+            }
+          },
+        },
+      );
+    } catch (err) {
+      const e = err as Error;
+      // Cancelled or failed — the opaque subject stays; just stop the ring.
+      useDocument.getState().updateLayer(layerId, { progress: 100 }, { history: false });
+      if (e.name !== "AbortError") set({ error: e.message });
+    } finally {
+      set({ running: false, controller: null, action: null });
+    }
+  };
+
   return {
     running: false,
     controller: null,
@@ -154,7 +245,7 @@ export const useGeneration = create<GenerationState>((set, get) => {
 
     clearError: () => set({ error: null }),
 
-    start: async ({ providerId, model, prompt, styleId, width, height }) => {
+    start: async ({ providerId, model, prompt, styleId, width, height, isolate }) => {
       if (get().running) return;
 
       const doc = useDocument.getState();
@@ -179,9 +270,23 @@ export const useGeneration = create<GenerationState>((set, get) => {
         prompt: prompt.trim(),
       });
 
+      // The isolate hint rides only on the request — layer.prompt/name keep the
+      // user's words so Remix "from source" isn't polluted with boilerplate.
+      const genPrompt = isolate ? `${prompt.trim()}. ${ISOLATE_INSTRUCTION}` : prompt;
+
       await runStream(layerId, prevSelectedId, ({ signal, onEvent }) =>
-        streamGenerate({ providerId, model, prompt, styleId, width, height }, { signal, onEvent }),
+        streamGenerate(
+          { providerId, model, prompt: genPrompt, styleId, width, height },
+          { signal, onEvent },
+        ),
       );
+
+      // Chain the background removal only if the generation actually survived
+      // (not dropped by cancel, not failed).
+      if (!isolate) return;
+      const generated = useDocument.getState().layers.find((l) => l.id === layerId);
+      if (get().error || !generated?.src) return;
+      await autoCutout(layerId, generated.src, providerId, model, width, height);
     },
 
     merge: async ({ providerId, model, prompt }) => {

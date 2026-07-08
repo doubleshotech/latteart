@@ -1,6 +1,6 @@
 import { useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ChevronDown, Palette, Sparkles, X } from "lucide-react";
+import { ChevronDown, Palette, Scissors, Sparkles, X } from "lucide-react";
 import { STYLE_PRESETS } from "@latteart/shared";
 import { ACTIONS } from "../lib/actions";
 import { useDocument } from "../stores/documentStore";
@@ -47,9 +47,11 @@ export function PromptBar() {
   const model = useSession((s) => s.model);
   const size = useSession((s) => s.size);
   const styleId = useSession((s) => s.styleId);
+  const isolate = useSession((s) => s.isolate);
   const setProvider = useSession((s) => s.setProvider);
   const setSize = useSession((s) => s.setSize);
   const setStyle = useSession((s) => s.setStyle);
+  const setIsolate = useSession((s) => s.setIsolate);
   const openSettings = useSession((s) => s.openSettings);
 
   const running = useGeneration((s) => s.running);
@@ -89,6 +91,7 @@ export function PromptBar() {
       styleId,
       width: size.w,
       height: size.h,
+      isolate,
     });
   };
 
@@ -408,6 +411,29 @@ export function PromptBar() {
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
+
+      {/* isolate ("Cutout") toggle — generate a transparent, stack-ready subject */}
+      <button
+        type="button"
+        onClick={() => setIsolate(!isolate)}
+        title="Cutout — generate the subject on a transparent background so it stacks cleanly"
+        aria-pressed={isolate}
+        style={{
+          ...pillBtn,
+          background: isolate
+            ? "color-mix(in srgb, var(--accent) 16%, transparent)"
+            : pillBtn.background,
+          border: isolate ? "1px solid var(--accent)" : pillBtn.border,
+          color: isolate ? "var(--accent)" : "var(--text-muted)",
+        }}
+      >
+        <Scissors
+          size={13}
+          strokeWidth={1.9}
+          color={isolate ? "var(--accent)" : "var(--text-faint)"}
+        />
+        Cutout
+      </button>
 
       <button
         type="button"

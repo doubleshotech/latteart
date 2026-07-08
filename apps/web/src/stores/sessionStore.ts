@@ -29,6 +29,9 @@ interface SessionState {
   model: string | null;
   size: SizePreset;
   styleId: string;
+  /** "Cutout" toggle: generate the subject on a flat background and auto-remove
+   * it, so the layer lands transparent and stacks cleanly. */
+  isolate: boolean;
   settingsOpen: boolean;
   /** Open drill-in in the layer panel (Remix / Change background / Variations). */
   actionView: ActionView | null;
@@ -38,6 +41,7 @@ interface SessionState {
   setModel: (model: string) => void;
   setSize: (s: SizePreset) => void;
   setStyle: (styleId: string) => void;
+  setIsolate: (isolate: boolean) => void;
   openSettings: () => void;
   closeSettings: () => void;
   openAction: (kind: ActionViewKind, sourceId: string) => void;
@@ -51,6 +55,7 @@ export const useSession = create<SessionState>((set) => ({
   model: "mock-diffusion",
   size: SIZE_PRESETS[0]!,
   styleId: "none",
+  isolate: false,
   settingsOpen: false,
   actionView: null,
   maskEdit: null,
@@ -58,6 +63,7 @@ export const useSession = create<SessionState>((set) => ({
   setModel: (model) => set({ model }),
   setSize: (size) => set({ size }),
   setStyle: (styleId) => set({ styleId }),
+  setIsolate: (isolate) => set({ isolate }),
   openSettings: () => set({ settingsOpen: true }),
   closeSettings: () => set({ settingsOpen: false }),
   openAction: (kind, sourceId) => set({ actionView: { kind, sourceId }, maskEdit: null }),
