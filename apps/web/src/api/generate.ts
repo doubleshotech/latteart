@@ -1,4 +1,4 @@
-import type { ProgressEvent } from "@latteart/shared";
+import type { EditMode, ProgressEvent } from "@latteart/shared";
 
 export interface GenerateParams {
   providerId: string;
@@ -20,7 +20,7 @@ export interface EditParams {
   image: string;
   /** Inpaint mask as a data: URL (white = regenerate); matches the source's pixels. */
   mask?: string;
-  mode?: "img2img" | "inpaint" | "outpaint";
+  mode?: EditMode;
   /** img2img similarity → denoising strength, 0..1. */
   strength?: number;
   /** Generation pixel size (scaled up from the source's display dims). */

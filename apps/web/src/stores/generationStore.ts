@@ -319,7 +319,12 @@ export const useGeneration = create<GenerationState>((set, get) => {
                   prompt: editPrompt,
                   styleId: kind === "remix" ? styleId : undefined,
                   image,
-                  mode: kind === "edit-area" ? "inpaint" : "img2img",
+                  mode:
+                    kind === "edit-area"
+                      ? "inpaint"
+                      : kind === "remove-bg"
+                        ? "remove-bg"
+                        : "img2img",
                   // Mask rides along only for inpaint; matches the source's pixels.
                   mask: kind === "edit-area" ? mask : undefined,
                   strength,
