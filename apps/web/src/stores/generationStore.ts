@@ -3,6 +3,7 @@ import type { ProgressEvent } from "@latteart/shared";
 import { ACTIONS, type ActionKind } from "../lib/actions";
 import { streamEdit, streamGenerate } from "../api/generate";
 import { flattenLayers } from "../lib/flatten";
+import { keyFlatBackground } from "../lib/keyFlatBackground";
 import { useDocument } from "./documentStore";
 import { useViewport } from "./viewportStore";
 
@@ -28,8 +29,10 @@ function requestSize(w: number, h: number, maxSide = 1024) {
 /** Appended to a generation when "Cutout" is on: steer the model toward a flat,
  * shadow-free subject that the auto-removal step below can key out cleanly. */
 const ISOLATE_INSTRUCTION =
-  "Show only the main subject, fully isolated on a plain, solid, evenly-lit " +
-  "background with no scenery, props, or cast shadows — a clean studio cut-out.";
+  "Place the subject on a completely flat, uniform, single solid-color background — " +
+  "no gradient, no floor or surface, no cast shadow, no scenery or props (this makes " +
+  "the background trivial to remove). Fit the entire subject within the frame with " +
+  "comfortable margin on every side; do not crop or cut off any part of it.";
 
 /** Default instruction for AI Merge — harmonize the flattened canvas into one image. */
 const MERGE_PROMPT =
@@ -156,11 +159,14 @@ export const useGeneration = create<GenerationState>((set, get) => {
   };
 
   /**
-   * Second phase of an isolated generation: strip the flat background off the
-   * just-generated layer, in place. The subject stays visible under a working
-   * scrim (status ready), its `src` swaps to the transparent cut-out on done.
-   * A failure or cancel keeps the opaque generation — still a usable result —
-   * rather than dropping the layer the way a fresh generation would.
+   * Second phase of an isolated generation: strip the background off the
+   * just-generated layer, in place. First try to key out the flat backdrop the
+   * isolate prompt asked for — that's local, instant, and works on any provider
+   * (diffusion img2img can't emit alpha, so a provider round-trip won't cut a
+   * real image out). Only if there's no uniform backdrop to key do we fall back
+   * to the provider's own removal (the mock fakes a cut-out; a real segmentation
+   * provider would too). A failure or cancel keeps the opaque generation — still
+   * a usable result — rather than dropping the layer like a fresh generation.
    */
   const autoCutout = async (
     layerId: string,
@@ -172,6 +178,15 @@ export const useGeneration = create<GenerationState>((set, get) => {
   ) => {
     const layer = useDocument.getState().layers.find((l) => l.id === layerId);
     if (!layer) return;
+
+    const keyed = await keyFlatBackground(image);
+    if (keyed) {
+      // Swap in the transparent cut-out. Kept out of history so one undo removes
+      // the whole isolated generation as a unit.
+      useDocument.getState().updateLayer(layerId, { src: keyed }, { history: false });
+      return;
+    }
+    if (!useDocument.getState().layers.some((l) => l.id === layerId)) return;
 
     const controller = new AbortController();
     set({
