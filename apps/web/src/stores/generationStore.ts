@@ -4,6 +4,7 @@ import { ACTIONS, type ActionKind } from "../lib/actions";
 import { streamEdit, streamGenerate } from "../api/generate";
 import { flattenLayers } from "../lib/flatten";
 import { keyFlatBackground } from "../lib/keyFlatBackground";
+import { removeBackgroundAI } from "../lib/removeBackgroundAI";
 import { useDocument } from "./documentStore";
 import { useViewport } from "./viewportStore";
 
@@ -179,6 +180,38 @@ export const useGeneration = create<GenerationState>((set, get) => {
     const layer = useDocument.getState().layers.find((l) => l.id === layerId);
     if (!layer) return;
 
+    // Robust path: an in-browser segmentation matte, which handles any
+    // background (gradients, shadows, scenes). Runs under a working scrim over
+    // the just-generated subject; the model downloads once on first use.
+    const aiController = new AbortController();
+    set({
+      running: true,
+      controller: aiController,
+      error: null,
+      action: {
+        kind: "remove-bg",
+        sourceId: layerId,
+        sourceName: layer.name,
+        placeholderId: layerId,
+        detail: "isolate · removing background",
+        count: 1,
+        index: 0,
+      },
+    });
+    useDocument.getState().updateLayer(layerId, { progress: 0 }, { history: false });
+    try {
+      const cut = await removeBackgroundAI(image);
+      useDocument.getState().updateLayer(layerId, { src: cut, progress: 100 }, { history: false });
+      return;
+    } catch (err) {
+      // Segmentation unavailable (e.g. model failed to load) — fall back to
+      // local flat-background keying, then the provider's own removal.
+      console.warn("[cutout] in-browser matte failed, falling back:", err);
+    } finally {
+      set({ running: false, controller: null, action: null });
+    }
+
+    // Fast local fallback: key out a flat backdrop if the generation has one.
     const keyed = await keyFlatBackground(image);
     if (keyed) {
       // Swap in the transparent cut-out. Kept out of history so one undo removes
@@ -250,6 +283,33 @@ export const useGeneration = create<GenerationState>((set, get) => {
     } finally {
       set({ running: false, controller: null, action: null });
     }
+  };
+
+  /**
+   * A runStream "job" that removes the background locally instead of via a
+   * provider: try the in-browser segmentation matte, then flat-color keying.
+   * Emits one progress tick and a done event carrying the cut-out, so it reuses
+   * runStream's placeholder/error/selection handling unchanged.
+   */
+  const localMatteJob = async (image: string, onEvent: (e: ProgressEvent) => void) => {
+    onEvent({ type: "progress", jobId: "local-matte", pct: 12 });
+    let cut: string | null = null;
+    try {
+      cut = await removeBackgroundAI(image);
+    } catch {
+      cut = await keyFlatBackground(image);
+    }
+    if (!cut) throw new Error("Couldn't remove the background — no clear subject found.");
+    onEvent({
+      type: "done",
+      jobId: "local-matte",
+      result: {
+        id: "local-matte",
+        images: [{ dataUrl: cut, width: 0, height: 0, transparent: true }],
+        provider: "local",
+        createdAt: 0,
+      },
+    });
   };
 
   return {
@@ -431,31 +491,32 @@ export const useGeneration = create<GenerationState>((set, get) => {
           await runStream(
             layerId,
             prevSelectedId,
-            ({ signal, onEvent }) =>
-              streamEdit(
-                {
-                  providerId,
-                  model,
-                  prompt: editPrompt,
-                  styleId: kind === "remix" ? styleId : undefined,
-                  image,
-                  mode:
-                    kind === "edit-area"
-                      ? "inpaint"
-                      : kind === "remove-bg"
-                        ? "remove-bg"
-                        : "img2img",
-                  // Mask rides along only for inpaint; matches the source's pixels.
-                  mask: kind === "edit-area" ? mask : undefined,
-                  strength,
-                  width: rw,
-                  height: rh,
-                  // Distinct seed per variation so mock output actually differs.
-                  seed:
-                    kind === "variations" ? Math.floor(Math.random() * 1_000_000) + i : undefined,
-                },
-                { signal, onEvent },
-              ),
+            // Remove background runs a local segmentation matte (any provider,
+            // any background); the rest go through the provider's edit endpoint.
+            kind === "remove-bg"
+              ? ({ onEvent }) => localMatteJob(image, onEvent)
+              : ({ signal, onEvent }) =>
+                  streamEdit(
+                    {
+                      providerId,
+                      model,
+                      prompt: editPrompt,
+                      styleId: kind === "remix" ? styleId : undefined,
+                      image,
+                      mode: kind === "edit-area" ? "inpaint" : "img2img",
+                      // Mask rides along only for inpaint; matches the source's pixels.
+                      mask: kind === "edit-area" ? mask : undefined,
+                      strength,
+                      width: rw,
+                      height: rh,
+                      // Distinct seed per variation so mock output actually differs.
+                      seed:
+                        kind === "variations"
+                          ? Math.floor(Math.random() * 1_000_000) + i
+                          : undefined,
+                    },
+                    { signal, onEvent },
+                  ),
             controller,
           );
 

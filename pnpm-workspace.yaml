@@ -27,6 +27,7 @@ catalog:
   tailwindcss: ^4.3.2
   "@tailwindcss/vite": ^4.3.2
   concurrently: ^10.0.3
+  "@huggingface/transformers": ^3.8.1
 overrides:
   vite: "catalog:"
   vitest: "catalog:"
@@ -39,3 +40,8 @@ peerDependencyRules:
     vitest: "*"
 allowBuilds:
   esbuild: true
+  # transformers.js Node-backend deps — latteart runs it in the browser
+  # (onnxruntime-web / WASM), so these native builds are unused.
+  onnxruntime-node: false
+  protobufjs: false
+  sharp: false
