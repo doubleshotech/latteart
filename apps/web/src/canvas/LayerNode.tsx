@@ -85,6 +85,7 @@ export function LayerNode({
           cornerRadius={CORNER}
           fillPatternImage={checkerPattern()}
           fillPatternRepeat="repeat"
+          opacity={layer.opacity}
           listening={false}
         />
       )}

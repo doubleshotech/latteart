@@ -35,6 +35,27 @@ const ISOLATE_INSTRUCTION =
   "the background trivial to remove). Fit the entire subject within the frame with " +
   "comfortable margin on every side; do not crop or cut off any part of it.";
 
+/**
+ * Remove the background locally: an in-browser segmentation matte, falling back
+ * to flat-color keying. Honors `signal` (throws AbortError) so a cancel discards
+ * the result instead of applying a cut-out the user cancelled. Returns null when
+ * neither method finds a subject to isolate. The WASM matte can't be interrupted
+ * mid-step, so cancellation takes effect at the next checkpoint.
+ */
+async function removeBackgroundLocal(image: string, signal: AbortSignal): Promise<string | null> {
+  if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+  let cut: string | null;
+  try {
+    cut = await removeBackgroundAI(image, signal);
+  } catch (err) {
+    if ((err as Error).name === "AbortError") throw err;
+    // Segmentation unavailable (e.g. the model failed to load) — try flat keying.
+    cut = await keyFlatBackground(image);
+  }
+  if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+  return cut;
+}
+
 /** Default instruction for AI Merge — harmonize the flattened canvas into one image. */
 const MERGE_PROMPT =
   "Merge these overlapping elements into a single cohesive, naturally-lit image. " +
@@ -161,65 +182,14 @@ export const useGeneration = create<GenerationState>((set, get) => {
 
   /**
    * Second phase of an isolated generation: strip the background off the
-   * just-generated layer, in place. First try to key out the flat backdrop the
-   * isolate prompt asked for — that's local, instant, and works on any provider
-   * (diffusion img2img can't emit alpha, so a provider round-trip won't cut a
-   * real image out). Only if there's no uniform backdrop to key do we fall back
-   * to the provider's own removal (the mock fakes a cut-out; a real segmentation
-   * provider would too). A failure or cancel keeps the opaque generation — still
-   * a usable result — rather than dropping the layer like a fresh generation.
+   * just-generated layer, in place, via the local matte (AI segmentation, then
+   * flat-color keying). Runs under a working scrim over the subject; on success
+   * the `src` swaps to the transparent cut-out. A failure or cancel keeps the
+   * opaque generation — still a usable result — rather than dropping the layer.
    */
-  const autoCutout = async (
-    layerId: string,
-    image: string,
-    providerId: string,
-    model: string | undefined,
-    width: number,
-    height: number,
-  ) => {
+  const autoCutout = async (layerId: string, image: string) => {
     const layer = useDocument.getState().layers.find((l) => l.id === layerId);
     if (!layer) return;
-
-    // Robust path: an in-browser segmentation matte, which handles any
-    // background (gradients, shadows, scenes). Runs under a working scrim over
-    // the just-generated subject; the model downloads once on first use.
-    const aiController = new AbortController();
-    set({
-      running: true,
-      controller: aiController,
-      error: null,
-      action: {
-        kind: "remove-bg",
-        sourceId: layerId,
-        sourceName: layer.name,
-        placeholderId: layerId,
-        detail: "isolate · removing background",
-        count: 1,
-        index: 0,
-      },
-    });
-    useDocument.getState().updateLayer(layerId, { progress: 0 }, { history: false });
-    try {
-      const cut = await removeBackgroundAI(image);
-      useDocument.getState().updateLayer(layerId, { src: cut, progress: 100 }, { history: false });
-      return;
-    } catch (err) {
-      // Segmentation unavailable (e.g. model failed to load) — fall back to
-      // local flat-background keying, then the provider's own removal.
-      console.warn("[cutout] in-browser matte failed, falling back:", err);
-    } finally {
-      set({ running: false, controller: null, action: null });
-    }
-
-    // Fast local fallback: key out a flat backdrop if the generation has one.
-    const keyed = await keyFlatBackground(image);
-    if (keyed) {
-      // Swap in the transparent cut-out. Kept out of history so one undo removes
-      // the whole isolated generation as a unit.
-      useDocument.getState().updateLayer(layerId, { src: keyed }, { history: false });
-      return;
-    }
-    if (!useDocument.getState().layers.some((l) => l.id === layerId)) return;
 
     const controller = new AbortController();
     set({
@@ -241,45 +211,20 @@ export const useGeneration = create<GenerationState>((set, get) => {
     useDocument.getState().updateLayer(layerId, { progress: 0 }, { history: false });
 
     try {
-      await streamEdit(
-        {
-          providerId,
-          model,
-          prompt: ACTIONS["remove-bg"].prompt(""),
-          image,
-          mode: "remove-bg",
-          width,
-          height,
-        },
-        {
-          signal: controller.signal,
-          onEvent: (e) => {
-            const d = useDocument.getState();
-            if (e.type === "progress") {
-              d.updateLayer(layerId, { progress: e.pct }, { history: false });
-            } else if (e.type === "done") {
-              const img = e.result.images[0];
-              // In-place swap: same layer, now transparent. Kept out of history
-              // so one undo removes the whole isolated generation as a unit.
-              d.updateLayer(
-                layerId,
-                { src: img?.dataUrl ?? image, progress: 100 },
-                {
-                  history: false,
-                },
-              );
-            } else if (e.type === "error") {
-              d.updateLayer(layerId, { progress: 100 }, { history: false });
-              set({ error: e.message });
-            }
-          },
-        },
-      );
+      const cut = await removeBackgroundLocal(image, controller.signal);
+      const d = useDocument.getState();
+      if (cut) {
+        // In-place swap: same layer, now transparent. Kept out of history so one
+        // undo removes the whole isolated generation as a unit.
+        d.updateLayer(layerId, { src: cut, progress: 100 }, { history: false });
+      } else {
+        d.updateLayer(layerId, { progress: 100 }, { history: false });
+        set({ error: "Couldn't isolate the subject — kept the original." });
+      }
     } catch (err) {
-      const e = err as Error;
-      // Cancelled or failed — the opaque subject stays; just stop the ring.
+      // Cancelled or the matte errored — keep the opaque generation as-is.
       useDocument.getState().updateLayer(layerId, { progress: 100 }, { history: false });
-      if (e.name !== "AbortError") set({ error: e.message });
+      if ((err as Error).name !== "AbortError") set({ error: (err as Error).message });
     } finally {
       set({ running: false, controller: null, action: null });
     }
@@ -291,14 +236,13 @@ export const useGeneration = create<GenerationState>((set, get) => {
    * Emits one progress tick and a done event carrying the cut-out, so it reuses
    * runStream's placeholder/error/selection handling unchanged.
    */
-  const localMatteJob = async (image: string, onEvent: (e: ProgressEvent) => void) => {
+  const localMatteJob = async (
+    image: string,
+    signal: AbortSignal,
+    onEvent: (e: ProgressEvent) => void,
+  ) => {
     onEvent({ type: "progress", jobId: "local-matte", pct: 12 });
-    let cut: string | null = null;
-    try {
-      cut = await removeBackgroundAI(image);
-    } catch {
-      cut = await keyFlatBackground(image);
-    }
+    const cut = await removeBackgroundLocal(image, signal);
     if (!cut) throw new Error("Couldn't remove the background — no clear subject found.");
     onEvent({
       type: "done",
@@ -361,7 +305,7 @@ export const useGeneration = create<GenerationState>((set, get) => {
       if (!isolate) return;
       const generated = useDocument.getState().layers.find((l) => l.id === layerId);
       if (get().error || !generated?.src) return;
-      await autoCutout(layerId, generated.src, providerId, model, width, height);
+      await autoCutout(layerId, generated.src);
     },
 
     merge: async ({ providerId, model, prompt }) => {
@@ -494,7 +438,7 @@ export const useGeneration = create<GenerationState>((set, get) => {
             // Remove background runs a local segmentation matte (any provider,
             // any background); the rest go through the provider's edit endpoint.
             kind === "remove-bg"
-              ? ({ onEvent }) => localMatteJob(image, onEvent)
+              ? ({ signal, onEvent }) => localMatteJob(image, signal, onEvent)
               : ({ signal, onEvent }) =>
                   streamEdit(
                     {

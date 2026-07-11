@@ -55,12 +55,13 @@ export async function keyFlatBackground(dataUrl: string): Promise<string | null>
   const img = await load(dataUrl);
   const W = img?.naturalWidth ?? 0;
   const H = img?.naturalHeight ?? 0;
-  if (!img || !W || !H) return null;
+  // Need room for the 8×8 corner patches; anything smaller isn't a keyable image.
+  if (!img || W < 8 || H < 8) return null;
 
   const canvas = document.createElement("canvas");
   canvas.width = W;
   canvas.height = H;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const ctx = canvas.getContext("2d");
   if (!ctx) return null;
   ctx.drawImage(img, 0, 0);
   const id = ctx.getImageData(0, 0, W, H);

@@ -48,10 +48,7 @@ export interface GenerateRequest {
   batch?: number;
 }
 
-// "remove-bg" is a distinct operation, not a diffusion variant: a provider may
-// route it to a dedicated segmentation model. Providers that don't (Gemini,
-// ComfyUI) fall through to their img2img path and lean on the prompt instead.
-export type EditMode = "img2img" | "inpaint" | "outpaint" | "remove-bg";
+export type EditMode = "img2img" | "inpaint" | "outpaint";
 
 export interface EditRequest {
   providerId: string;

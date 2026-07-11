@@ -78,33 +78,6 @@ function placeholderSvg(prompt: string, width: number, height: number, seed: num
 }
 
 /**
- * A subject cut out on a transparent background — the mock's answer to
- * "remove background". A head-and-shoulders silhouette (no backing rect) so the
- * result carries real alpha and the layer's checkerboard treatment has
- * something to show offline.
- */
-function cutoutSvg(prompt: string, width: number, height: number, seed: number): string {
-  const h1 = (hash(prompt) + seed) % 360;
-  const h2 = (h1 + 55) % 360;
-  const h3 = (h1 + 210) % 360;
-  const cx = width / 2;
-  const unit = Math.min(width, height);
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-  <defs>
-    <radialGradient id="a" cx="42%" cy="30%" r="80%">
-      <stop offset="0%" stop-color="hsl(${h1} 72% 62%)"/>
-      <stop offset="55%" stop-color="hsl(${h2} 55% 34%)"/>
-      <stop offset="100%" stop-color="hsl(${h3} 48% 16%)"/>
-    </radialGradient>
-  </defs>
-  <ellipse cx="${cx}" cy="${(height * 1.04).toFixed(1)}" rx="${(width * 0.34).toFixed(1)}" ry="${(height * 0.62).toFixed(1)}" fill="url(#a)"/>
-  <circle cx="${cx}" cy="${(height * 0.33).toFixed(1)}" r="${(unit * 0.17).toFixed(1)}" fill="url(#a)"/>
-  <text x="6%" y="95%" font-family="ui-monospace, monospace" font-size="${Math.round(width * 0.021)}" fill="#ffffff" fill-opacity="0.7">mock · cut out</text>
-</svg>`;
-  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
-}
-
-/**
  * Built-in offline provider. Fully implements {@link ImageProvider} so the
  * end-to-end generate→layer loop works with zero keys and zero network — real
  * cloud/local providers are drop-in replacements behind the same interface.
@@ -177,14 +150,11 @@ export const mockProvider: ImageProvider = {
       });
     }
 
-    const dataUrl =
-      req.mode === "remove-bg"
-        ? cutoutSvg(req.prompt, width, height, seed)
-        : placeholderSvg(`edit · ${req.prompt}`, width, height, seed);
-
     return {
       id: crypto.randomUUID(),
-      images: [{ dataUrl, width, height }],
+      images: [
+        { dataUrl: placeholderSvg(`edit · ${req.prompt}`, width, height, seed), width, height },
+      ],
       provider: "mock",
       model: req.model ?? "mock-diffusion",
       seed,

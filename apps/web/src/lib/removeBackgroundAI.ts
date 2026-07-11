@@ -19,34 +19,52 @@ interface Session {
 let sessionPromise: Promise<Session> | null = null;
 
 /** Load (once) the segmentation model + processor. transformers.js is imported
- * lazily so its weight stays out of the main bundle until Cutout is first used. */
+ * lazily so its weight stays out of the main bundle until Cutout is first used.
+ * On failure the cached promise is cleared so a transient error (offline, flaky
+ * HF fetch) doesn't permanently disable the matte — the next call retries. */
 function getSession(): Promise<Session> {
-  sessionPromise ??= (async () => {
-    const tf = await import("@huggingface/transformers");
-    tf.env.allowLocalModels = false;
-    const model = await tf.AutoModel.from_pretrained(MODEL_ID);
-    const processor = await tf.AutoProcessor.from_pretrained(MODEL_ID);
-    return { model, processor, RawImage: tf.RawImage };
-  })();
+  sessionPromise ??= loadSession().catch((err: unknown) => {
+    sessionPromise = null;
+    throw err;
+  });
   return sessionPromise;
+}
+
+async function loadSession(): Promise<Session> {
+  const tf = await import("@huggingface/transformers");
+  tf.env.allowLocalModels = false;
+  const model = await tf.AutoModel.from_pretrained(MODEL_ID);
+  const processor = await tf.AutoProcessor.from_pretrained(MODEL_ID);
+  return { model, processor, RawImage: tf.RawImage };
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
 }
 
 /**
  * Segment the foreground with an in-browser matting model and return the image
  * as a transparent PNG. Works on any background — the robust alternative to
  * flat-color keying. The model downloads once (browser-cached), so the first
- * call is slow and later calls are fast.
+ * call is slow and later calls are fast. The WASM steps can't be interrupted
+ * mid-flight, so `signal` is checked between them: a cancel discards the result
+ * (throws AbortError) rather than applying a cut-out the user cancelled.
  */
-export async function removeBackgroundAI(dataUrl: string): Promise<string> {
+export async function removeBackgroundAI(dataUrl: string, signal?: AbortSignal): Promise<string> {
   const { model, processor, RawImage } = await getSession();
+  throwIfAborted(signal);
 
   const image = await RawImage.fromURL(dataUrl);
   const { pixel_values } = await processor(image);
-  const { output } = await model({ input: pixel_values });
+  const result = await model({ input: pixel_values });
+  throwIfAborted(signal);
 
-  // output: foreground probability [1, 1, H, W] in 0..1 → grayscale mask,
-  // resized back to the source resolution.
-  const mask = await RawImage.fromTensor(output[0].mul(255).to("uint8")).resize(
+  // Foreground probability [1, 1, H, W] in 0..1 → grayscale mask, resized back
+  // to the source resolution. NB: the `input`/`output` tensor names are
+  // RMBG-1.4's — a different MODEL_ID (e.g. BiRefNet uses `input_image`) needs
+  // these updated too; `output` falls back to the first tensor defensively.
+  const logits = result.output ?? Object.values(result)[0];
+  const mask = await RawImage.fromTensor(logits[0].mul(255).to("uint8")).resize(
     image.width,
     image.height,
   );

@@ -1,10 +1,17 @@
 import { useEffect, useState } from "react";
 
-// Detection is keyed by src so a re-render, a remount, or a Duplicate (which
-// clones src) reuses the earlier scan instead of re-reading pixels. Keys are
-// the layer's own data: URL string — already resident in the document store,
-// so this holds a reference, not a copy.
+// Detection is cached so a re-render, remount, or Duplicate (which clones src)
+// reuses the earlier scan instead of re-reading pixels. Keyed by a short
+// fingerprint, NOT the full data: URL — otherwise the Map would pin every
+// generated/edited layer's multi-MB base64 string for the tab's lifetime, even
+// after the layer is deleted. A cap bounds it regardless.
+const CACHE_MAX = 512;
 const cache = new Map<string, boolean>();
+
+/** Cheap, collision-safe-enough key: length plus the tail of the data URL. */
+function keyOf(src: string): string {
+  return `${src.length}:${src.slice(-40)}`;
+}
 
 /**
  * Whether an image carries real transparency — any pixel below fully opaque.
@@ -12,11 +19,12 @@ const cache = new Map<string, boolean>();
  * layer earns a checkerboard backing.
  */
 export function useHasAlpha(img: HTMLImageElement | null, src: string | null): boolean {
-  const [hasAlpha, setHasAlpha] = useState(() => (src ? (cache.get(src) ?? false) : false));
+  const [hasAlpha, setHasAlpha] = useState(() => (src ? (cache.get(keyOf(src)) ?? false) : false));
 
   useEffect(() => {
     if (!src || !img) return;
-    const known = cache.get(src);
+    const key = keyOf(src);
+    const known = cache.get(key);
     if (known !== undefined) {
       setHasAlpha(known);
       return;
@@ -27,7 +35,8 @@ export function useHasAlpha(img: HTMLImageElement | null, src: string | null): b
     // so wait until the loaded image actually matches src.
     if (img.src !== src) return;
     const result = detectAlpha(img);
-    cache.set(src, result);
+    if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
+    cache.set(key, result);
     setHasAlpha(result);
   }, [img, src]);
 
@@ -53,7 +62,7 @@ function detectAlpha(img: HTMLImageElement): boolean {
   const canvas = document.createElement("canvas");
   canvas.width = cw;
   canvas.height = ch;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const ctx = canvas.getContext("2d");
   if (!ctx) return false;
   ctx.drawImage(img, 0, 0, cw, ch);
 
