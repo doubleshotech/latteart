@@ -48,11 +48,9 @@ export function PromptBar() {
   const size = useSession((s) => s.size);
   const styleId = useSession((s) => s.styleId);
   const isolate = useSession((s) => s.isolate);
-  const setProvider = useSession((s) => s.setProvider);
   const setSize = useSession((s) => s.setSize);
   const setStyle = useSession((s) => s.setStyle);
   const setIsolate = useSession((s) => s.setIsolate);
-  const openSettings = useSession((s) => s.openSettings);
 
   const running = useGeneration((s) => s.running);
   const action = useGeneration((s) => s.action);
@@ -72,12 +70,6 @@ export function PromptBar() {
   const [focused, setFocused] = useState(false);
 
   const active = providers.find((p) => p.id === providerId);
-  const activeModelLabel =
-    active?.models.find((m) => m.id === model)?.label ?? active?.models[0]?.label ?? "";
-  const providerLabel = active
-    ? `${active.label}${activeModelLabel ? ` · ${activeModelLabel}` : ""}`
-    : "Select provider";
-
   const activeStyle = STYLE_PRESETS.find((s) => s.id === styleId) ?? STYLE_PRESETS[0]!;
 
   const canGenerate = prompt.trim().length > 0 && !!active?.available && !running;
@@ -297,59 +289,6 @@ export function PromptBar() {
         }}
       />
       <div style={{ width: 1, height: 22, background: "var(--border)", flex: "none" }} />
-
-      {/* provider picker */}
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger asChild>
-          <button type="button" style={pillBtn}>
-            <span
-              style={{
-                width: 7,
-                height: 7,
-                borderRadius: 9,
-                background: active?.available ? "var(--ok)" : "var(--text-faint)",
-                boxShadow: active?.available ? "0 0 6px var(--ok)" : "none",
-              }}
-            />
-            {providerLabel}
-            <ChevronDown size={13} strokeWidth={1.9} color="var(--text-faint)" />
-          </button>
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content className="dd-content" sideOffset={8} align="end">
-            {providers.map((p) => (
-              <DropdownMenu.Item
-                key={p.id}
-                className="dd-item"
-                onSelect={() =>
-                  p.available ? setProvider(p.id, p.models[0]?.id ?? null) : openSettings()
-                }
-              >
-                <span
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: 9,
-                    flex: "none",
-                    background: p.available ? "var(--ok)" : "var(--text-faint)",
-                  }}
-                />
-                <span style={{ flex: 1 }}>
-                  {p.label}
-                  <span style={{ color: "var(--text-faint)" }}>
-                    {p.models[0] ? ` · ${p.models[0].label}` : ""}
-                  </span>
-                </span>
-                {!p.available && (
-                  <span style={{ fontSize: 10.5, color: "var(--text-faint)" }}>
-                    {p.requiresKey ? "needs key" : "connect"}
-                  </span>
-                )}
-              </DropdownMenu.Item>
-            ))}
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
 
       {/* size picker */}
       <DropdownMenu.Root>
