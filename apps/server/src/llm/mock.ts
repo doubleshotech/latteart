@@ -27,6 +27,7 @@ export const mockLLMProvider: LLMProvider = {
     return true;
   },
 
+  // ctx/signal are unused — this enhancer is synchronous and endpoint-free.
   async enhancePrompt(prompt: string): Promise<string> {
     const base = prompt.trim().replace(/[\s.,]+$/, "");
     if (!base) return prompt;

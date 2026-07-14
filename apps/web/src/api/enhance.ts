@@ -8,12 +8,15 @@ import type { EnhanceApiResponse } from "@latteart/shared";
  */
 export async function enhancePrompt(
   prompt: string,
+  providerId?: string,
   signal?: AbortSignal,
 ): Promise<EnhanceApiResponse> {
+  // "auto" (or unset) → let the server pick the best available engine.
+  const pinned = providerId && providerId !== "auto" ? { providerId } : {};
   const res = await fetch("/api/enhance", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, ...pinned }),
     signal,
   });
   if (!res.ok) {

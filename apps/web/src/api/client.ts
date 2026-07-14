@@ -13,3 +13,6 @@ export const client = hc<AppType>(
 
 /** Public provider descriptor, inferred from the server's response. */
 export type Provider = InferResponseType<typeof client.api.providers.$get>[number];
+
+/** LLM enhancement engine descriptor, inferred from the server's response. */
+export type LLMEngine = InferResponseType<typeof client.api.llm.$get>[number];

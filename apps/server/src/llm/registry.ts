@@ -1,4 +1,4 @@
-import type { LLMProvider } from "@latteart/shared";
+import type { LLMContext, LLMProvider } from "@latteart/shared";
 import { mockLLMProvider } from "./mock.ts";
 import { ollamaLLMProvider } from "./ollama.ts";
 
@@ -13,22 +13,30 @@ import { ollamaLLMProvider } from "./ollama.ts";
  */
 const PROVIDERS: LLMProvider[] = [ollamaLLMProvider, mockLLMProvider];
 
+export function listLLMProviders(): LLMProvider[] {
+  return PROVIDERS;
+}
+
 export function getLLMProvider(id: string): LLMProvider | undefined {
   return PROVIDERS.find((p) => p.id === id);
 }
 
 /**
  * Pick the LLM to enhance with. An explicit id wins (if known); otherwise return
- * the first provider that reports itself available. The mock is always available,
- * so this never returns undefined.
+ * the first provider that reports itself available — probed with its configured
+ * context via `ctxFor`. The mock is always available, so this never returns
+ * undefined.
  */
-export async function resolveLLMProvider(preferredId?: string): Promise<LLMProvider> {
+export async function resolveLLMProvider(
+  preferredId: string | undefined,
+  ctxFor: (id: string) => LLMContext,
+): Promise<LLMProvider> {
   if (preferredId) {
     const chosen = getLLMProvider(preferredId);
     if (chosen) return chosen;
   }
   for (const p of PROVIDERS) {
-    if (await p.isAvailable()) return p;
+    if (await p.isAvailable(ctxFor(p.id))) return p;
   }
   return mockLLMProvider;
 }

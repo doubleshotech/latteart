@@ -32,6 +32,9 @@ interface SessionState {
   /** "Cutout" toggle: generate the subject on a flat background and auto-remove
    * it, so the layer lands transparent and stacks cleanly. */
   isolate: boolean;
+  /** Which LLM engine enhances prompts. "auto" → the server picks the best
+   * available (Ollama, else the offline mock); otherwise a specific engine id. */
+  llmProviderId: string;
   settingsOpen: boolean;
   /** Open drill-in in the layer panel (Remix / Change background / Variations). */
   actionView: ActionView | null;
@@ -42,6 +45,7 @@ interface SessionState {
   setSize: (s: SizePreset) => void;
   setStyle: (styleId: string) => void;
   setIsolate: (isolate: boolean) => void;
+  setLLMProvider: (id: string) => void;
   openSettings: () => void;
   closeSettings: () => void;
   openAction: (kind: ActionViewKind, sourceId: string) => void;
@@ -56,6 +60,7 @@ export const useSession = create<SessionState>((set) => ({
   size: SIZE_PRESETS[0]!,
   styleId: "none",
   isolate: false,
+  llmProviderId: "auto",
   settingsOpen: false,
   actionView: null,
   maskEdit: null,
@@ -64,6 +69,7 @@ export const useSession = create<SessionState>((set) => ({
   setSize: (size) => set({ size }),
   setStyle: (styleId) => set({ styleId }),
   setIsolate: (isolate) => set({ isolate }),
+  setLLMProvider: (id) => set({ llmProviderId: id }),
   openSettings: () => set({ settingsOpen: true }),
   closeSettings: () => set({ settingsOpen: false }),
   openAction: (kind, sourceId) => set({ actionView: { kind, sourceId }, maskEdit: null }),

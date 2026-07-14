@@ -41,6 +41,8 @@ export interface ProjectSession {
   styleId: string;
   /** "Cutout" toggle. Optional so projects saved before it still load. */
   isolate?: boolean;
+  /** Chosen prompt-enhancement engine ("auto" | engine id). Optional/back-compat. */
+  llmProviderId?: string;
 }
 
 export interface ProjectDoc {

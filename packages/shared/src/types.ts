@@ -141,6 +141,16 @@ export interface ImageProvider {
 }
 
 /**
+ * Per-call context for an {@link LLMProvider}: the configured endpoint for local
+ * engines (falls back to the provider's own default when unset). No key field —
+ * the prompt-enhance LLMs are local/no-auth today; a BYOK cloud LLM would add one.
+ */
+export interface LLMContext {
+  /** Configured base URL for a local engine (e.g. Ollama); undefined → default. */
+  baseUrl?: string;
+}
+
+/**
  * Secondary role: a local/BYOK LLM for prompt enhancement and natural-language
  * edit commands. Deliberately separate from {@link ImageProvider}.
  */
@@ -148,13 +158,28 @@ export interface LLMProvider {
   id: string;
   label: string;
   kind: ProviderKind;
+  /** Connection field for engines configured by URL (Ollama); absent for the mock. */
+  connection?: { placeholder: string; defaultValue: string };
   /**
    * Whether this engine is reachable/usable right now. Local engines (Ollama)
    * probe their endpoint; the offline mock is always available so Enhance
    * always does *something*. The backend picks the first available provider.
    */
-  isAvailable(): Promise<boolean>;
-  enhancePrompt(prompt: string, signal?: AbortSignal): Promise<string>;
+  isAvailable(ctx?: LLMContext): Promise<boolean>;
+  enhancePrompt(prompt: string, ctx?: LLMContext, signal?: AbortSignal): Promise<string>;
+}
+
+/** Safe, public description of an LLM enhancement engine sent to the frontend. */
+export interface LLMProviderDescriptor {
+  id: string;
+  label: string;
+  kind: ProviderKind;
+  /** Live probe: is the engine reachable/usable right now. */
+  available: boolean;
+  /** Present when the engine is configured by URL; the field's placeholder/default. */
+  connection: { placeholder: string; defaultValue: string } | null;
+  /** True when a custom URL has been saved for this engine. */
+  hasUrl: boolean;
 }
 
 /**

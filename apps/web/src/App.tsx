@@ -8,16 +8,19 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { Topbar } from "./components/Topbar";
 import { UndoRedo } from "./components/UndoRedo";
 import { ZoomControl } from "./components/ZoomControl";
+import { useLLM } from "./stores/llmStore";
 import { initProjectSync } from "./stores/projectStore";
 import { useProviders } from "./stores/providersStore";
 
 export default function App() {
   const refresh = useProviders((s) => s.refresh);
+  const refreshLLM = useLLM((s) => s.refresh);
 
   useEffect(() => {
     void refresh();
+    void refreshLLM();
     void initProjectSync();
-  }, [refresh]);
+  }, [refresh, refreshLLM]);
 
   return (
     <div

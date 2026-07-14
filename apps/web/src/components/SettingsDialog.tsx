@@ -1,7 +1,8 @@
 import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { KeyRound, Lock, Server, X } from "lucide-react";
-import type { Provider } from "../api/client";
+import { KeyRound, Lock, Server, Wand2, X } from "lucide-react";
+import type { LLMEngine, Provider } from "../api/client";
+import { useLLM } from "../stores/llmStore";
 import { useProviders } from "../stores/providersStore";
 import { useSession } from "../stores/sessionStore";
 
@@ -275,6 +276,226 @@ function ProviderCard({ p, last }: { p: Provider; last: boolean }) {
   );
 }
 
+/** Editable Ollama endpoint — persisted server-side like ComfyUI's URL. The
+ * stored value is never returned (keystore hygiene), so the field starts at the
+ * default and a note flags when a custom URL is saved. */
+function EngineUrlField({ engine }: { engine: LLMEngine }) {
+  const setUrl = useLLM((s) => s.setUrl);
+  const clearUrl = useLLM((s) => s.clearUrl);
+  const [value, setValue] = useState(engine.connection?.defaultValue ?? "");
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    if (!value.trim()) return;
+    setBusy(true);
+    try {
+      await setUrl(engine.id, value.trim());
+    } finally {
+      setBusy(false);
+    }
+  };
+  const reset = async () => {
+    setBusy(true);
+    try {
+      await clearUrl(engine.id);
+      setValue(engine.connection?.defaultValue ?? "");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 11 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={fieldBox}>
+          <Server size={14} strokeWidth={1.7} color="var(--text-faint)" />
+          <input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void save();
+            }}
+            placeholder={engine.connection?.placeholder}
+            style={{
+              flex: 1,
+              background: "transparent",
+              border: "none",
+              outline: "none",
+              color: "var(--text)",
+              fontFamily: "var(--font-mono)",
+              fontSize: 12,
+            }}
+          />
+        </div>
+        <button type="button" style={ghostBtn} disabled={busy} onClick={save}>
+          Save
+        </button>
+        {engine.hasUrl && (
+          <button type="button" style={ghostBtn} disabled={busy} onClick={reset}>
+            Reset
+          </button>
+        )}
+      </div>
+      <div style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 6 }}>
+        {engine.available
+          ? engine.hasUrl
+            ? "Custom endpoint saved · reachable"
+            : "Reachable at the default endpoint"
+          : "Not reachable — start the engine, then Save to re-check"}
+      </div>
+    </div>
+  );
+}
+
+/** One selectable enhancement engine (or the synthetic "Auto"). Click to pick. */
+function EngineCard({
+  label,
+  selected,
+  onSelect,
+  badge,
+  children,
+}: {
+  label: React.ReactNode;
+  selected: boolean;
+  onSelect: () => void;
+  badge?: React.ReactNode;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div
+      role="radio"
+      aria-checked={selected}
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
+      style={{
+        borderRadius: 10,
+        padding: "11px 12px",
+        cursor: "pointer",
+        border: selected ? "1px solid var(--accent)" : "1px solid var(--border)",
+        background: selected
+          ? "color-mix(in srgb, var(--accent) 8%, transparent)"
+          : "var(--surface-2)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span
+          style={{
+            width: 15,
+            height: 15,
+            borderRadius: "50%",
+            flex: "none",
+            border: selected ? "4.5px solid var(--accent)" : "1.5px solid var(--border-strong)",
+            background: selected ? "var(--accent-fg)" : "transparent",
+          }}
+        />
+        <div style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 500 }}>{label}</div>
+        {badge}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        fontSize: 11,
+        color: ok ? "var(--ok)" : "var(--text-faint)",
+      }}
+    >
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: 9,
+          background: ok ? "var(--ok)" : "var(--text-faint)",
+          flex: "none",
+        }}
+      />
+      {label}
+    </span>
+  );
+}
+
+/** Settings section for the ✨ Enhance engine — pick Auto / Ollama / offline. */
+function LLMSection() {
+  const engines = useLLM((s) => s.engines);
+  const selected = useSession((s) => s.llmProviderId);
+  const setLLM = useSession((s) => s.setLLMProvider);
+
+  return (
+    <div style={{ padding: "14px 12px 4px", borderTop: "1px solid var(--border)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Wand2 size={15} strokeWidth={1.8} color="var(--accent)" />
+        <div style={{ fontSize: 13, fontWeight: 600 }}>Prompt enhancement</div>
+      </div>
+      <div
+        style={{
+          fontSize: 11.5,
+          color: "var(--text-muted)",
+          margin: "3px 0 12px",
+          lineHeight: 1.5,
+        }}
+      >
+        The local model behind ✨ Enhance. Runs on your machine — no key, nothing leaves it.
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <EngineCard
+          label={
+            <>
+              Auto{" "}
+              <span style={{ color: "var(--text-faint)", fontWeight: 400 }}>· best available</span>
+            </>
+          }
+          selected={selected === "auto"}
+          onSelect={() => setLLM("auto")}
+          badge={
+            <span
+              style={{
+                fontSize: 10.5,
+                padding: "2px 7px",
+                borderRadius: 999,
+                color: "var(--accent)",
+                background: "color-mix(in srgb, var(--accent) 14%, transparent)",
+              }}
+            >
+              Recommended
+            </span>
+          }
+        />
+        {engines.map((e) => (
+          <EngineCard
+            key={e.id}
+            label={e.label}
+            selected={selected === e.id}
+            onSelect={() => setLLM(e.id)}
+            badge={
+              e.connection ? (
+                <StatusBadge ok={e.available} label={e.available ? "Reachable" : "Not reachable"} />
+              ) : (
+                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Built-in</span>
+              )
+            }
+          >
+            {selected === e.id && e.connection && <EngineUrlField engine={e} />}
+          </EngineCard>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function SettingsDialog() {
   const settingsOpen = useSession((s) => s.settingsOpen);
   const closeSettings = useSession((s) => s.closeSettings);
@@ -300,7 +521,7 @@ export function SettingsDialog() {
                 Settings
               </Dialog.Title>
               <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
-                Providers &amp; API keys
+                Providers, keys &amp; prompt enhancement
               </div>
             </div>
             <Dialog.Close asChild>
@@ -357,6 +578,7 @@ export function SettingsDialog() {
             {providers.map((p, i) => (
               <ProviderCard key={p.id} p={p} last={i === providers.length - 1} />
             ))}
+            <LLMSection />
           </div>
 
           <div

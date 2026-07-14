@@ -71,6 +71,7 @@ function snapshot(): ProjectDoc {
       size: { w: s.size.w, h: s.size.h, label: s.size.label },
       styleId: s.styleId,
       isolate: s.isolate,
+      llmProviderId: s.llmProviderId,
     },
   };
 }
@@ -98,7 +99,7 @@ function changeKey(): string {
   const parts: string[] = [
     `m:${meta.name}`,
     `v:${vp.scale}:${vp.x}:${vp.y}`,
-    `s:${s.providerId}:${s.model}:${s.size.w}x${s.size.h}:${s.size.label}:${s.styleId}:${s.isolate}`,
+    `s:${s.providerId}:${s.model}:${s.size.w}x${s.size.h}:${s.size.label}:${s.styleId}:${s.isolate}:${s.llmProviderId}`,
   ];
   for (const l of useDocument.getState().layers) {
     if (l.status !== "ready") continue;
@@ -206,6 +207,7 @@ function hydrate(doc: ProjectDoc) {
   s.setSize(preset ?? doc.session.size);
   s.setStyle(doc.session.styleId);
   s.setIsolate(doc.session.isolate ?? false);
+  s.setLLMProvider(doc.session.llmProviderId ?? "auto");
 }
 
 /**

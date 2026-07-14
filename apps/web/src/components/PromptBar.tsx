@@ -316,6 +316,7 @@ export function PromptBar() {
   const size = useSession((s) => s.size);
   const styleId = useSession((s) => s.styleId);
   const isolate = useSession((s) => s.isolate);
+  const llmProviderId = useSession((s) => s.llmProviderId);
   const setSize = useSession((s) => s.setSize);
   const setStyle = useSession((s) => s.setStyle);
   const setIsolate = useSession((s) => s.setIsolate);
@@ -353,7 +354,7 @@ export function PromptBar() {
     enhanceCtl.current = ctl;
     setEnhancing(true);
     try {
-      const { prompt: enhanced } = await enhancePrompt(text, ctl.signal);
+      const { prompt: enhanced } = await enhancePrompt(text, llmProviderId, ctl.signal);
       if (ctl.signal.aborted) return;
       setPreEnhance(prompt);
       setPrompt(enhanced);

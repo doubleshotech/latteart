@@ -9,6 +9,8 @@ import type {
   EnhanceApiResponse,
   GenResult,
   GenerateRequest,
+  LLMContext,
+  LLMProviderDescriptor,
   ProgressEvent,
   ProjectDoc,
   ProviderContext,
@@ -18,7 +20,7 @@ import { PROVIDER_CATALOG, catalogEntry } from "./providers/catalog.ts";
 import type { ProviderCatalogEntry } from "./providers/catalog.ts";
 import { listComfyCheckpoints } from "./providers/comfyui.ts";
 import { getProvider } from "./providers/registry.ts";
-import { resolveLLMProvider } from "./llm/registry.ts";
+import { getLLMProvider, listLLMProviders, resolveLLMProvider } from "./llm/registry.ts";
 import { deleteSecret, getSecretValue, hasSecret, setSecret } from "./keystore/index.ts";
 import { DEFAULT_PROJECT_ID, loadProject, saveProject } from "./projects/index.ts";
 
@@ -125,7 +127,8 @@ const routes = app
   // Write-only — the value is never echoed back.
   .put("/api/keys/:id", async (c) => {
     const id = c.req.param("id");
-    if (!catalogEntry(id)) return c.json({ error: "unknown provider" }, 404);
+    // Accept both image providers and LLM engines (Ollama stores its URL here).
+    if (!catalogEntry(id) && !getLLMProvider(id)) return c.json({ error: "unknown provider" }, 404);
     const body = await c.req.json<{ value?: string }>().catch(() => ({}) as { value?: string });
     const value = typeof body.value === "string" ? body.value.trim() : "";
     if (!value) return c.json({ error: "empty value" }, 400);
@@ -237,10 +240,31 @@ const routes = app
     return streamJob(c, providerId, entry, (ctx, signal) => provider.edit!(req, ctx, signal));
   })
 
+  // The LLM enhancement engines and their live availability — the secondary
+  // (assist-only) axis, separate from image /api/providers. Powers the Settings
+  // picker. Ollama's configured URL lives in the keystore (like ComfyUI's).
+  .get("/api/llm", async (c) => {
+    const list = await Promise.all(
+      listLLMProviders().map(async (p): Promise<LLMProviderDescriptor> => {
+        const ctx: LLMContext = { baseUrl: getSecretValue(p.id) };
+        return {
+          id: p.id,
+          label: p.label,
+          kind: p.kind,
+          available: await p.isAvailable(ctx),
+          connection: p.connection ?? null,
+          hasUrl: hasSecret(p.id),
+        };
+      }),
+    );
+    return c.json(list);
+  })
+
   // Prompt enhancement (Phase 2 assist). Rewrites a terse prompt into a richer
   // one via a local LLM (Ollama) when reachable, else the offline mock. This is
   // the *secondary* LLM axis — no image provider or key involved. Non-streaming:
-  // enhancement is a single quick call.
+  // enhancement is a single quick call. A providerId pins the engine; omitted →
+  // the server auto-resolves the first available one.
   .post("/api/enhance", async (c) => {
     const body = await c.req
       .json<Partial<EnhanceApiRequest>>()
@@ -249,9 +273,10 @@ const routes = app
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
 
     const providerId = body.providerId === undefined ? undefined : String(body.providerId);
-    const llm = await resolveLLMProvider(providerId);
+    const ctxFor = (id: string): LLMContext => ({ baseUrl: getSecretValue(id) });
+    const llm = await resolveLLMProvider(providerId, ctxFor);
     try {
-      const enhanced = await llm.enhancePrompt(prompt, c.req.raw.signal);
+      const enhanced = await llm.enhancePrompt(prompt, ctxFor(llm.id), c.req.raw.signal);
       return c.json({ prompt: enhanced, provider: llm.label } satisfies EnhanceApiResponse);
     } catch (err) {
       const message = (err as Error)?.message ?? "prompt enhancement failed";
