@@ -138,6 +138,8 @@ interface GenerationState {
   action: RunningAction | null;
   error: string | null;
   clearError: () => void;
+  /** Surface a one-off error in the toast (e.g. a prompt-enhance failure). */
+  setError: (message: string) => void;
   /** Each of these enqueues; the job runs immediately when nothing else is. */
   start: (opts: StartOpts) => void;
   merge: (opts: MergeOpts) => void;
@@ -563,6 +565,7 @@ export const useGeneration = create<GenerationState>((set, get) => {
     error: null,
 
     clearError: () => set({ error: null }),
+    setError: (message) => set({ error: message }),
 
     start: (opts) => {
       enqueue({

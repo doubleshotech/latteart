@@ -1,0 +1,90 @@
+import type { LLMProvider } from "@latteart/shared";
+
+/**
+ * Ollama runs entirely on the user's machine (no key), so it's the offline-first
+ * choice for prompt enhancement. Base URL is the Ollama default; override with
+ * OLLAMA_URL. Trailing slash trimmed so path joins stay clean.
+ */
+const BASE = (process.env.OLLAMA_URL ?? "http://localhost:11434").replace(/\/+$/, "");
+
+/** Small, fast instruct models we prefer for a quick prompt rewrite, in order. */
+const PREFERRED = /llama3\.2|llama3\.1|llama3|qwen2\.5|qwen2|mistral|gemma2|gemma|phi/i;
+
+const SYSTEM = `You are a prompt engineer for a text-to-image model. Rewrite the user's short description into a single, vivid image-generation prompt.
+Rules:
+- Keep the user's core subject and intent; never invent a different scene.
+- Add concrete visual detail: setting, lighting, mood, color, composition, and medium or camera.
+- Output ONLY the rewritten prompt as one line — no preamble, no quotes, no explanation, no markdown.
+- Keep it under about 60 words.`;
+
+/**
+ * Probe the local Ollama instance and choose an installed model — a small
+ * instruct model if present, else whatever's first. Returns null when Ollama is
+ * unreachable or has no models, which is how availability is decided.
+ */
+async function pickModel(signal?: AbortSignal): Promise<string | null> {
+  try {
+    const res = await fetch(`${BASE}/api/tags`, { signal });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { models?: { name?: string }[] };
+    const names = (data.models ?? []).map((m) => m.name).filter((n): n is string => !!n);
+    if (names.length === 0) return null;
+    return names.find((n) => PREFERRED.test(n)) ?? names[0]!;
+  } catch {
+    return null;
+  }
+}
+
+/** Strip wrapper quotes, a leading "Prompt:" label, and collapse whitespace. */
+function cleanEnhanced(text: string): string {
+  return text
+    .trim()
+    .replace(/^\s*(?:prompt|enhanced prompt)\s*:\s*/i, "")
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Local prompt enhancement via Ollama's `/api/generate` (non-streaming). Picks
+ * an installed model at call time so it adapts to whatever the user has pulled.
+ */
+export const ollamaLLMProvider: LLMProvider = {
+  id: "ollama",
+  label: "Ollama",
+  kind: "local",
+
+  async isAvailable(): Promise<boolean> {
+    return (await pickModel()) !== null;
+  },
+
+  async enhancePrompt(prompt: string, signal?: AbortSignal): Promise<string> {
+    const model = await pickModel(signal);
+    if (!model) {
+      throw new Error(
+        "Ollama isn't reachable — start it with `ollama serve` and pull a model (e.g. `ollama pull llama3.2`).",
+      );
+    }
+
+    const res = await fetch(`${BASE}/api/generate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model,
+        system: SYSTEM,
+        prompt,
+        stream: false,
+        options: { temperature: 0.8 },
+      }),
+      signal,
+    });
+    if (!res.ok) {
+      throw new Error(`Ollama request failed (${res.status})`);
+    }
+
+    const data = (await res.json()) as { response?: string };
+    const enhanced = cleanEnhanced(data.response ?? "");
+    if (!enhanced) throw new Error("Ollama returned an empty enhancement.");
+    return enhanced;
+  },
+};

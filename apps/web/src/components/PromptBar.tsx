@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ChevronDown, Layers, Palette, Scissors, Sparkles, X } from "lucide-react";
+import { ChevronDown, Layers, Palette, Scissors, Sparkles, Undo2, Wand2, X } from "lucide-react";
 import { STYLE_PRESETS } from "@latteart/shared";
+import { enhancePrompt } from "../api/enhance";
 import { ACTIONS } from "../lib/actions";
 import { useDocument } from "../stores/documentStore";
 import { useGeneration, type QueuedJob } from "../stores/generationStore";
@@ -42,6 +43,21 @@ const spinner: React.CSSProperties = {
   border: "2.4px solid rgba(255,255,255,0.12)",
   borderTopColor: "var(--accent)",
   animation: "latte-spin 0.9s linear infinite",
+};
+
+/** Square icon-only affordance sitting on the prompt text (Enhance / revert). */
+const iconBtn: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 34,
+  height: 34,
+  borderRadius: 9,
+  background: "var(--surface-2)",
+  border: "1px solid var(--border)",
+  color: "var(--text-muted)",
+  cursor: "pointer",
+  flex: "none",
 };
 
 function jobIcon(kind: QueuedJob["kind"]) {
@@ -307,15 +323,53 @@ export function PromptBar() {
   const busy = useGeneration((s) => s.busy);
   const queued = useGeneration((s) => s.queue.length > 0);
   const start = useGeneration((s) => s.start);
+  const setError = useGeneration((s) => s.setError);
 
   const [prompt, setPrompt] = useState("");
   const [focused, setFocused] = useState(false);
+  const [enhancing, setEnhancing] = useState(false);
+  // The pre-enhance draft, so a single tap reverts. Cleared once the user edits.
+  const [preEnhance, setPreEnhance] = useState<string | null>(null);
+  const enhanceCtl = useRef<AbortController | null>(null);
 
   const active = providers.find((p) => p.id === providerId);
   const activeStyle = STYLE_PRESETS.find((s) => s.id === styleId) ?? STYLE_PRESETS[0]!;
 
   // The bar never locks while a job runs — submitting mid-run queues the job.
   const canGenerate = prompt.trim().length > 0 && !!active?.available;
+  const canEnhance = prompt.trim().length > 0 && !enhancing;
+
+  const editPrompt = (value: string) => {
+    setPrompt(value);
+    // Any manual edit invalidates the revert target.
+    if (preEnhance !== null) setPreEnhance(null);
+  };
+
+  const runEnhance = async () => {
+    const text = prompt.trim();
+    if (!text || enhancing) return;
+    enhanceCtl.current?.abort();
+    const ctl = new AbortController();
+    enhanceCtl.current = ctl;
+    setEnhancing(true);
+    try {
+      const { prompt: enhanced } = await enhancePrompt(text, ctl.signal);
+      if (ctl.signal.aborted) return;
+      setPreEnhance(prompt);
+      setPrompt(enhanced);
+    } catch (err) {
+      if (!ctl.signal.aborted) setError((err as Error).message || "Couldn't enhance the prompt.");
+    } finally {
+      if (enhanceCtl.current === ctl) enhanceCtl.current = null;
+      setEnhancing(false);
+    }
+  };
+
+  const revertEnhance = () => {
+    if (preEnhance === null) return;
+    setPrompt(preEnhance);
+    setPreEnhance(null);
+  };
 
   const submit = () => {
     if (!canGenerate || !active) return;
@@ -331,6 +385,7 @@ export function PromptBar() {
     // Consume the draft so the field is ready for the next prompt (and the
     // "…it queues up" placeholder shows) — re-Enter can't re-submit the same one.
     setPrompt("");
+    setPreEnhance(null);
   };
 
   return (
@@ -362,7 +417,7 @@ export function PromptBar() {
         <input
           id="prompt-input"
           value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
+          onChange={(e) => editPrompt(e.target.value)}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           onKeyDown={(e) => {
@@ -385,6 +440,41 @@ export function PromptBar() {
             fontSize: 13,
           }}
         />
+
+        {/* revert to the pre-enhance prompt — appears only right after enhancing */}
+        {preEnhance !== null && (
+          <button
+            type="button"
+            onClick={revertEnhance}
+            title="Undo enhance — restore your original prompt"
+            aria-label="Undo enhance"
+            style={{ ...iconBtn, width: 30, height: 30, color: "var(--text-faint)" }}
+          >
+            <Undo2 size={14} strokeWidth={1.9} />
+          </button>
+        )}
+
+        {/* ✨ Enhance — rewrite the prompt with more detail via a local LLM */}
+        <button
+          type="button"
+          onClick={runEnhance}
+          disabled={!canEnhance}
+          title="Enhance — rewrite your prompt with richer visual detail"
+          aria-label="Enhance prompt"
+          style={{
+            ...iconBtn,
+            color: canEnhance ? "var(--accent)" : "var(--text-faint)",
+            cursor: canEnhance ? "pointer" : "not-allowed",
+            opacity: prompt.trim().length > 0 ? 1 : 0.5,
+          }}
+        >
+          {enhancing ? (
+            <span style={{ ...spinner, width: 15, height: 15 }} />
+          ) : (
+            <Wand2 size={15} strokeWidth={1.8} />
+          )}
+        </button>
+
         <div style={{ width: 1, height: 22, background: "var(--border)", flex: "none" }} />
 
         {/* size picker */}

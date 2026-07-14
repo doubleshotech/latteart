@@ -148,6 +148,12 @@ export interface LLMProvider {
   id: string;
   label: string;
   kind: ProviderKind;
+  /**
+   * Whether this engine is reachable/usable right now. Local engines (Ollama)
+   * probe their endpoint; the offline mock is always available so Enhance
+   * always does *something*. The backend picks the first available provider.
+   */
+  isAvailable(): Promise<boolean>;
   enhancePrompt(prompt: string, signal?: AbortSignal): Promise<string>;
 }
 
@@ -180,4 +186,19 @@ export interface GenerateApiRequest {
 /** Immediate response to `POST /api/generate` — the SSE stream carries the rest. */
 export interface GenerateApiResponse {
   jobId: string;
+}
+
+/** Request body for `POST /api/enhance` — rewrite a terse prompt into a richer one. */
+export interface EnhanceApiRequest {
+  prompt: string;
+  /** Optional explicit LLM provider id; omitted → the server picks the best available. */
+  providerId?: string;
+}
+
+/** Response from `POST /api/enhance`. */
+export interface EnhanceApiResponse {
+  /** The rewritten, more descriptive image prompt. */
+  prompt: string;
+  /** Human label of the engine that produced it (e.g. "Ollama", "Offline enhancer"). */
+  provider: string;
 }

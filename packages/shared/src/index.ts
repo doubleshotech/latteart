@@ -14,6 +14,8 @@ export type {
   ProviderDescriptor,
   GenerateApiRequest,
   GenerateApiResponse,
+  EnhanceApiRequest,
+  EnhanceApiResponse,
 } from "./types.ts";
 
 export type { StylePreset } from "./styles.ts";

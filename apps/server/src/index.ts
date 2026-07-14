@@ -5,6 +5,8 @@ import { logger } from "hono/logger";
 import { streamSSE } from "hono/streaming";
 import type {
   EditRequest,
+  EnhanceApiRequest,
+  EnhanceApiResponse,
   GenResult,
   GenerateRequest,
   ProgressEvent,
@@ -16,6 +18,7 @@ import { PROVIDER_CATALOG, catalogEntry } from "./providers/catalog.ts";
 import type { ProviderCatalogEntry } from "./providers/catalog.ts";
 import { listComfyCheckpoints } from "./providers/comfyui.ts";
 import { getProvider } from "./providers/registry.ts";
+import { resolveLLMProvider } from "./llm/registry.ts";
 import { deleteSecret, getSecretValue, hasSecret, setSecret } from "./keystore/index.ts";
 import { DEFAULT_PROJECT_ID, loadProject, saveProject } from "./projects/index.ts";
 
@@ -232,6 +235,28 @@ const routes = app
     };
 
     return streamJob(c, providerId, entry, (ctx, signal) => provider.edit!(req, ctx, signal));
+  })
+
+  // Prompt enhancement (Phase 2 assist). Rewrites a terse prompt into a richer
+  // one via a local LLM (Ollama) when reachable, else the offline mock. This is
+  // the *secondary* LLM axis — no image provider or key involved. Non-streaming:
+  // enhancement is a single quick call.
+  .post("/api/enhance", async (c) => {
+    const body = await c.req
+      .json<Partial<EnhanceApiRequest>>()
+      .catch(() => ({}) as Partial<EnhanceApiRequest>);
+    const prompt = String(body.prompt ?? "").trim();
+    if (!prompt) return c.json({ error: "prompt is required" }, 400);
+
+    const providerId = body.providerId === undefined ? undefined : String(body.providerId);
+    const llm = await resolveLLMProvider(providerId);
+    try {
+      const enhanced = await llm.enhancePrompt(prompt, c.req.raw.signal);
+      return c.json({ prompt: enhanced, provider: llm.label } satisfies EnhanceApiResponse);
+    } catch (err) {
+      const message = (err as Error)?.message ?? "prompt enhancement failed";
+      return c.json({ error: message }, 502);
+    }
   });
 
 /** Consumed by the web client as `hc<AppType>()` — type-only, never bundled. */
