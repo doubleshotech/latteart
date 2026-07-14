@@ -41,7 +41,6 @@ export function ActionDrillIn({ view, source }: { view: ActionView; source: Laye
   const model = useSession((s) => s.model);
   const providers = useProviders((s) => s.providers);
 
-  const running = useGeneration((s) => s.running);
   const runAction = useGeneration((s) => s.runAction);
 
   const [prompt, setPrompt] = useState(view.kind === "remix" ? (source.prompt ?? "") : "");
@@ -56,11 +55,9 @@ export function ActionDrillIn({ view, source }: { view: ActionView; source: Laye
   const stop = SIMILARITY_STOPS[simIndex] ?? SIMILARITY_STOPS[1];
 
   const needsPrompt = view.kind === "remix" || view.kind === "change-bg";
+  // Not gated on a running job — submitting mid-run queues the action.
   const canGenerate =
-    !running &&
-    !!active?.available &&
-    active.capabilities.img2img &&
-    (!needsPrompt || !!prompt.trim());
+    !!active?.available && active.capabilities.img2img && (!needsPrompt || !!prompt.trim());
 
   const activeStyle = STYLE_PRESETS.find((s) => s.id === styleId) ?? STYLE_PRESETS[0]!;
   const jobs = view.kind === "variations" ? count : 1;
@@ -71,7 +68,7 @@ export function ActionDrillIn({ view, source }: { view: ActionView; source: Laye
       view.kind === "remix"
         ? `img2img · ${active.label} · ${stop.label.toLowerCase()}`
         : `img2img · ${active.label}`;
-    void runAction({
+    runAction({
       providerId: active.id,
       model: model ?? undefined,
       kind: view.kind,

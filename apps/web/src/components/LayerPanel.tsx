@@ -299,7 +299,6 @@ export function LayerPanel() {
   const selectedId = useDocument((s) => s.selectedId);
   const actionView = useSession((s) => s.actionView);
   const closeAction = useSession((s) => s.closeAction);
-  const running = useGeneration((s) => s.running);
   const reversed = [...layers].reverse();
 
   const selected = layers.find((l) => l.id === selectedId);
@@ -380,7 +379,8 @@ export function LayerPanel() {
         </button>
       </div>
 
-      {selected && selected.status === "ready" && !running && <ActionsDock layer={selected} />}
+      {/* Stays up during a run — actions submitted mid-run join the queue. */}
+      {selected && selected.status === "ready" && <ActionsDock layer={selected} />}
 
       {layers.length === 0 ? (
         <div

@@ -65,7 +65,6 @@ function Editor({ source }: { source: Layer }) {
   const model = useSession((s) => s.model);
   const providers = useProviders((s) => s.providers);
   const runAction = useGeneration((s) => s.runAction);
-  const running = useGeneration((s) => s.running);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const strokesRef = useRef<Stroke[]>([]);
@@ -79,12 +78,10 @@ function Editor({ source }: { source: Layer }) {
   const active = providers.find((p) => p.id === providerId);
   const disp = nat ? fit(nat.w, nat.h) : null;
   const hasStrokes = strokesRef.current.length > 0;
+  // Not gated on a running job — submitting mid-run queues the inpaint (the
+  // mask is captured now, so later canvas changes can't skew it).
   const canGenerate =
-    !running &&
-    !!active?.available &&
-    !!active.capabilities.inpaint &&
-    hasStrokes &&
-    !!prompt.trim();
+    !!active?.available && !!active.capabilities.inpaint && hasStrokes && !!prompt.trim();
 
   // Load the source to learn its native pixel size (the mask's resolution).
   useEffect(() => {
@@ -181,7 +178,7 @@ function Editor({ source }: { source: Layer }) {
   const generate = () => {
     if (!canGenerate || !active || !nat) return;
     const mask = strokesToMaskDataUrl(strokesRef.current, nat.w, nat.h);
-    void runAction({
+    runAction({
       providerId: active.id,
       model: model ?? undefined,
       kind: "edit-area",

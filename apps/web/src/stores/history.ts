@@ -108,11 +108,12 @@ function equal(a: Entry, b: Entry): boolean {
   });
 }
 
-/** Undo/redo is held while a job streams — a placeholder's add entry must not
- * be popped out from under a live stream. */
+/** Undo/redo is held while a job executes — a placeholder's add entry must not
+ * be popped out from under a live stream. Jobs merely waiting in the queue
+ * don't block: they re-resolve their source when they run and fail cleanly if
+ * an undo removed it. */
 function blocked(): boolean {
-  const g = useGeneration.getState();
-  return g.running || g.action !== null;
+  return useGeneration.getState().busy;
 }
 
 /** Pop entries until one actually differs (failed-generation add/remove pairs

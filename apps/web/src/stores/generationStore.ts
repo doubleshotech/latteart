@@ -76,59 +76,120 @@ export interface RunningAction {
   index: number;
 }
 
+/** A submitted job waiting its turn (or executing). Jobs run one at a time in
+ * submission order — local diffusion is serial anyway — so the UI keeps
+ * accepting new work while a slow generation streams. */
+export interface QueuedJob {
+  id: string;
+  /** What produced the job — picks the chip icon in the queue strip. */
+  kind: ActionKind | "generate" | "merge";
+  /** Short human label for the queue strip, e.g. the prompt or "Remix · Cat". */
+  label: string;
+  run: () => Promise<void>;
+}
+
 let cascade = 0;
 
+interface StartOpts {
+  providerId: string;
+  model?: string;
+  prompt: string;
+  styleId?: string;
+  width: number;
+  height: number;
+  /** Generate the subject on a flat background, then auto-remove it so the
+   * layer lands transparent and composes cleanly (the "Cutout" toggle). */
+  isolate?: boolean;
+}
+
+interface MergeOpts {
+  providerId: string;
+  model?: string;
+  prompt?: string;
+}
+
+interface RunActionOpts {
+  providerId: string;
+  model?: string;
+  kind: ActionKind;
+  sourceId: string;
+  /** Remix / change-bg / edit-area user prompt; ignored for remove-bg and variations. */
+  prompt?: string;
+  /** Remix style override; the /api/edit route composes it server-side. */
+  styleId?: string;
+  /** img2img similarity → denoising strength, 0..1. */
+  strength?: number;
+  /** Inpaint mask (white = regenerate) as a data: URL — edit-area only. */
+  mask?: string;
+  /** Toast subline, e.g. "img2img · Gemini · quite similar". */
+  detail?: string;
+  count?: number;
+}
+
 interface GenerationState {
+  /** A provider stream is live (progress flowing into a placeholder). */
   running: boolean;
+  /** The executing job spans more than its stream (flatten preamble, the
+   * multi-variation loop, auto-cutout) — busy covers the whole job and is what
+   * gates undo/redo. Waiting jobs don't set it. */
+  busy: boolean;
+  /** Jobs waiting their turn; the executing job is `current`, not in here. */
+  queue: QueuedJob[];
+  current: QueuedJob | null;
   controller: AbortController | null;
   action: RunningAction | null;
   error: string | null;
   clearError: () => void;
-  start: (opts: {
-    providerId: string;
-    model?: string;
-    prompt: string;
-    styleId?: string;
-    width: number;
-    height: number;
-    /** Generate the subject on a flat background, then auto-remove it so the
-     * layer lands transparent and composes cleanly (the "Cutout" toggle). */
-    isolate?: boolean;
-  }) => Promise<void>;
-  merge: (opts: { providerId: string; model?: string; prompt?: string }) => Promise<void>;
-  runAction: (opts: {
-    providerId: string;
-    model?: string;
-    kind: ActionKind;
-    sourceId: string;
-    /** Remix / change-bg / edit-area user prompt; ignored for remove-bg and variations. */
-    prompt?: string;
-    /** Remix style override; the /api/edit route composes it server-side. */
-    styleId?: string;
-    /** img2img similarity → denoising strength, 0..1. */
-    strength?: number;
-    /** Inpaint mask (white = regenerate) as a data: URL — edit-area only. */
-    mask?: string;
-    /** Toast subline, e.g. "img2img · Gemini · quite similar". */
-    detail?: string;
-    count?: number;
-  }) => Promise<void>;
+  /** Each of these enqueues; the job runs immediately when nothing else is. */
+  start: (opts: StartOpts) => void;
+  merge: (opts: MergeOpts) => void;
+  runAction: (opts: RunActionOpts) => void;
+  /** Remove a waiting job (queue-chip ✕). No effect on the executing job. */
+  dequeue: (id: string) => void;
+  /** Drop every waiting job; the executing one keeps running. */
+  clearQueue: () => void;
+  /** Abort the executing job; the queue advances to the next one. */
   cancel: () => void;
 }
 
 export const useGeneration = create<GenerationState>((set, get) => {
   /**
+   * Run the next waiting job if nothing is executing. The check-and-claim is
+   * synchronous, so two rapid submits can't both start; each job's completion
+   * (success, failure, or cancel) pulls the next one.
+   */
+  const pump = () => {
+    if (get().busy) return;
+    const next = get().queue[0];
+    if (!next) return;
+    set((s) => ({ queue: s.queue.slice(1), busy: true, current: next }));
+    void next.run().finally(() => {
+      set({ busy: false, current: null });
+      pump();
+    });
+  };
+
+  const enqueue = (job: Omit<QueuedJob, "id">) => {
+    // A fresh submission clears a lingering failure toast (the queue advancing
+    // on its own does not — an unattended error must stay visible).
+    set((s) => ({ queue: [...s.queue, { ...job, id: crypto.randomUUID() }], error: null }));
+    pump();
+  };
+
+  /**
    * Stream a job (generate or edit) into an already-created placeholder layer:
    * pipe progress, swap in the result on `done`, and on failure/cancel drop the
    * placeholder while restoring the user's prior selection. A caller running a
    * multi-job action passes its own controller so cancel spans the whole run.
+   * Returns this stream's own outcome — callers must not infer it from the
+   * global `error`, which may still hold a previous queued job's failure.
    */
   const runStream = async (
     layerId: string,
     prevSelectedId: string | null,
     run: (handlers: { signal: AbortSignal; onEvent: (e: ProgressEvent) => void }) => Promise<void>,
     controller: AbortController = new AbortController(),
-  ) => {
+  ): Promise<"ok" | "failed" | "aborted"> => {
     // Drop the placeholder and restore the prior selection — the placeholder is
     // auto-selected on add, so a failure/cancel shouldn't move the user's focus.
     // removeLayer only reassigns selection when the removed layer was selected;
@@ -143,7 +204,8 @@ export const useGeneration = create<GenerationState>((set, get) => {
       d.select(restore);
     };
 
-    set({ running: true, controller, error: null });
+    set({ running: true, controller });
+    let outcome: "ok" | "failed" | "aborted" = "ok";
 
     try {
       await run({
@@ -160,6 +222,9 @@ export const useGeneration = create<GenerationState>((set, get) => {
               progress: 100,
             });
           } else if (e.type === "error") {
+            // The stream itself closes cleanly after an error event, so mark
+            // the failure here for the return value.
+            outcome = "failed";
             dropPlaceholder();
             set({ error: e.message });
           }
@@ -169,15 +234,18 @@ export const useGeneration = create<GenerationState>((set, get) => {
       const e = err as Error;
       if (e.name === "AbortError") {
         // Cancelled — drop the placeholder and return to idle.
+        outcome = "aborted";
         dropPlaceholder();
       } else {
         // Failed (bad key, quota, refusal) — drop the placeholder, surface why.
+        outcome = "failed";
         dropPlaceholder();
         set({ error: e.message });
       }
     } finally {
       set({ running: false, controller: null });
     }
+    return outcome;
   };
 
   /**
@@ -195,7 +263,6 @@ export const useGeneration = create<GenerationState>((set, get) => {
     set({
       running: true,
       controller,
-      error: null,
       // Anchor the on-canvas working ring + toast on the layer itself; the ring
       // reads placeholder.progress, so placeholderId === the layer being cut out.
       action: {
@@ -256,222 +323,252 @@ export const useGeneration = create<GenerationState>((set, get) => {
     });
   };
 
+  const doStart = async ({
+    providerId,
+    model,
+    prompt,
+    styleId,
+    width,
+    height,
+    isolate,
+  }: StartOpts) => {
+    const doc = useDocument.getState();
+    const vp = useViewport.getState();
+    const { dw, dh } = displaySize(width, height);
+    const prevSelectedId = doc.selectedId;
+
+    // Drop the placeholder at the viewport center, cascading repeats slightly.
+    const cx = (vp.stageW / 2 - vp.x) / vp.scale;
+    const cy = (vp.stageH / 2 - vp.y) / vp.scale;
+    cascade = (cascade + 1) % 6;
+
+    const layerId = doc.addLayer({
+      name: prompt.trim().slice(0, 28) || "Generation",
+      x: cx - dw / 2 + cascade * 22,
+      y: cy - dh / 2 + cascade * 22,
+      width: dw,
+      height: dh,
+      src: null,
+      status: "generating",
+      progress: 0,
+      prompt: prompt.trim(),
+    });
+
+    // The isolate hint rides only on the request — layer.prompt/name keep the
+    // user's words so Remix "from source" isn't polluted with boilerplate.
+    const genPrompt = isolate ? `${prompt.trim()}. ${ISOLATE_INSTRUCTION}` : prompt;
+
+    const outcome = await runStream(layerId, prevSelectedId, ({ signal, onEvent }) =>
+      streamGenerate(
+        { providerId, model, prompt: genPrompt, styleId, width, height },
+        { signal, onEvent },
+      ),
+    );
+
+    // Chain the background removal only if the generation actually survived
+    // (not dropped by cancel, not failed).
+    if (!isolate || outcome !== "ok") return;
+    const generated = useDocument.getState().layers.find((l) => l.id === layerId);
+    if (!generated?.src) return;
+    await autoCutout(layerId, generated.src);
+  };
+
+  const doMerge = async ({ providerId, model, prompt }: MergeOpts) => {
+    const doc = useDocument.getState();
+    // Flatten the visible canvas to one composite, capped so the payload stays
+    // reasonable, then hand it to the provider's img2img (Strategy B). A queued
+    // merge flattens when its turn comes, so it includes layers generated by
+    // the jobs queued ahead of it.
+    const flat = await flattenLayers(doc.layers, { pixelRatio: 2, maxSide: 1536 });
+    if (!flat) {
+      set({ error: "Nothing to merge yet — generate a layer first." });
+      return;
+    }
+
+    const prevSelectedId = doc.selectedId;
+
+    // Placeholder overlays the exact composite bounds; the merged image lands on top.
+    const layerId = doc.addLayer({
+      name: "AI Merge",
+      x: flat.box.x,
+      y: flat.box.y,
+      width: flat.box.width,
+      height: flat.box.height,
+      src: null,
+      status: "generating",
+      progress: 0,
+    });
+
+    await runStream(layerId, prevSelectedId, ({ signal, onEvent }) =>
+      streamEdit(
+        {
+          providerId,
+          model,
+          prompt: prompt?.trim() || MERGE_PROMPT,
+          image: flat.dataUrl,
+          mode: "img2img",
+        },
+        { signal, onEvent },
+      ),
+    );
+  };
+
+  const doRunAction = async ({
+    providerId,
+    model,
+    kind,
+    sourceId,
+    prompt,
+    styleId,
+    strength,
+    mask,
+    detail,
+    count = 1,
+  }: RunActionOpts) => {
+    const doc = useDocument.getState();
+    const source = doc.layers.find((l) => l.id === sourceId);
+    if (!source?.src) {
+      set({ error: "Select a finished layer first." });
+      return;
+    }
+
+    const userPrompt = prompt?.trim() ?? "";
+    // The style override rides along as styleId; the /api/edit route composes
+    // it into the prompt server-side (same as /api/generate), so send raw.
+    const editPrompt = ACTIONS[kind].prompt(userPrompt);
+    // Content never mutates, so the img2img payload stays the original source.
+    const image = source.src;
+
+    const prevSelectedId = doc.selectedId;
+    // One controller for the whole action so cancel stops the remaining jobs.
+    const controller = new AbortController();
+    const jobs = Math.max(1, Math.min(4, count));
+
+    try {
+      for (let i = 0; i < jobs; i++) {
+        if (controller.signal.aborted) break;
+
+        // Re-resolve the live source each iteration — the user may rename or
+        // move it between jobs (its pixels never change), or delete it.
+        const live = useDocument.getState().layers.find((l) => l.id === sourceId);
+        if (!live) break;
+
+        // The result lands as a new layer offset above the source (screen 5).
+        // Create it first so the action can anchor its progress UI on it.
+        const editArea = kind === "edit-area";
+        const layerId = doc.addLayer(
+          {
+            name: ACTIONS[kind].layerName(live.name, i, jobs),
+            // Edit-area (inpaint) returns a full image whose unedited regions
+            // must line up with the source, so overlay it exactly in place;
+            // other actions offset the result above the source.
+            x: live.x + (editArea ? 0 : 46 + i * 22),
+            y: live.y + (editArea ? 0 : -36 + i * 22),
+            width: live.width,
+            height: live.height,
+            src: null,
+            status: "generating",
+            progress: 0,
+            prompt: kind === "variations" ? live.prompt : userPrompt || live.prompt,
+            derivedFrom: { id: live.id, name: live.name },
+          },
+          // A multi-job run (variations) is one undo unit: only the first
+          // placeholder records the pre-run snapshot; the rest add silently.
+          { history: i === 0 },
+        );
+
+        set({
+          action: {
+            kind,
+            sourceId: live.id,
+            sourceName: live.name,
+            placeholderId: layerId,
+            detail: detail ?? "img2img",
+            count: jobs,
+            index: i,
+          },
+        });
+
+        // Layer dims are display size (~320); scale up to generation pixels.
+        const { rw, rh } = requestSize(live.width, live.height);
+
+        const outcome = await runStream(
+          layerId,
+          prevSelectedId,
+          // Remove background runs a local segmentation matte (any provider,
+          // any background); the rest go through the provider's edit endpoint.
+          kind === "remove-bg"
+            ? ({ signal, onEvent }) => localMatteJob(image, signal, onEvent)
+            : ({ signal, onEvent }) =>
+                streamEdit(
+                  {
+                    providerId,
+                    model,
+                    prompt: editPrompt,
+                    styleId: kind === "remix" ? styleId : undefined,
+                    image,
+                    mode: kind === "edit-area" ? "inpaint" : "img2img",
+                    // Mask rides along only for inpaint; matches the source's pixels.
+                    mask: kind === "edit-area" ? mask : undefined,
+                    strength,
+                    width: rw,
+                    height: rh,
+                    // Distinct seed per variation so mock output actually differs.
+                    seed:
+                      kind === "variations" ? Math.floor(Math.random() * 1_000_000) + i : undefined,
+                  },
+                  { signal, onEvent },
+                ),
+          controller,
+        );
+
+        // A provider failure surfaces an error and drops the placeholder;
+        // don't keep hammering the same provider for the remaining jobs.
+        // (Abort is also caught by the signal check at the top of the loop.)
+        if (outcome !== "ok") break;
+      }
+    } finally {
+      set({ action: null });
+    }
+  };
+
   return {
     running: false,
+    busy: false,
+    queue: [],
+    current: null,
     controller: null,
     action: null,
     error: null,
 
     clearError: () => set({ error: null }),
 
-    start: async ({ providerId, model, prompt, styleId, width, height, isolate }) => {
-      if (get().running) return;
-
-      const doc = useDocument.getState();
-      const vp = useViewport.getState();
-      const { dw, dh } = displaySize(width, height);
-      const prevSelectedId = doc.selectedId;
-
-      // Drop the placeholder at the viewport center, cascading repeats slightly.
-      const cx = (vp.stageW / 2 - vp.x) / vp.scale;
-      const cy = (vp.stageH / 2 - vp.y) / vp.scale;
-      cascade = (cascade + 1) % 6;
-
-      const layerId = doc.addLayer({
-        name: prompt.trim().slice(0, 28) || "Generation",
-        x: cx - dw / 2 + cascade * 22,
-        y: cy - dh / 2 + cascade * 22,
-        width: dw,
-        height: dh,
-        src: null,
-        status: "generating",
-        progress: 0,
-        prompt: prompt.trim(),
+    start: (opts) => {
+      enqueue({
+        kind: "generate",
+        label: opts.prompt.trim().slice(0, 48) || "Generation",
+        run: () => doStart(opts),
       });
-
-      // The isolate hint rides only on the request — layer.prompt/name keep the
-      // user's words so Remix "from source" isn't polluted with boilerplate.
-      const genPrompt = isolate ? `${prompt.trim()}. ${ISOLATE_INSTRUCTION}` : prompt;
-
-      await runStream(layerId, prevSelectedId, ({ signal, onEvent }) =>
-        streamGenerate(
-          { providerId, model, prompt: genPrompt, styleId, width, height },
-          { signal, onEvent },
-        ),
-      );
-
-      // Chain the background removal only if the generation actually survived
-      // (not dropped by cancel, not failed).
-      if (!isolate) return;
-      const generated = useDocument.getState().layers.find((l) => l.id === layerId);
-      if (get().error || !generated?.src) return;
-      await autoCutout(layerId, generated.src);
     },
 
-    merge: async ({ providerId, model, prompt }) => {
-      if (get().running) return;
+    merge: (opts) => {
+      enqueue({ kind: "merge", label: "AI Merge", run: () => doMerge(opts) });
+    },
 
-      const doc = useDocument.getState();
-      // Flatten the visible canvas to one composite, capped so the payload stays
-      // reasonable, then hand it to the provider's img2img (Strategy B).
-      const flat = await flattenLayers(doc.layers, { pixelRatio: 2, maxSide: 1536 });
-      if (!flat) {
-        set({ error: "Nothing to merge yet — generate a layer first." });
-        return;
-      }
-      // flattenLayers awaited above — a click could have started another job in
-      // that window, so re-check before claiming the running slot.
-      if (get().running) return;
-
-      const prevSelectedId = doc.selectedId;
-
-      // Placeholder overlays the exact composite bounds; the merged image lands on top.
-      const layerId = doc.addLayer({
-        name: "AI Merge",
-        x: flat.box.x,
-        y: flat.box.y,
-        width: flat.box.width,
-        height: flat.box.height,
-        src: null,
-        status: "generating",
-        progress: 0,
+    runAction: (opts) => {
+      // The label resolves the source now (for the queue chip); the job itself
+      // re-resolves at run time and errors cleanly if the layer is gone by then.
+      const source = useDocument.getState().layers.find((l) => l.id === opts.sourceId);
+      enqueue({
+        kind: opts.kind,
+        label: source ? `${ACTIONS[opts.kind].label} · ${source.name}` : ACTIONS[opts.kind].label,
+        run: () => doRunAction(opts),
       });
-
-      await runStream(layerId, prevSelectedId, ({ signal, onEvent }) =>
-        streamEdit(
-          {
-            providerId,
-            model,
-            prompt: prompt?.trim() || MERGE_PROMPT,
-            image: flat.dataUrl,
-            mode: "img2img",
-          },
-          { signal, onEvent },
-        ),
-      );
     },
 
-    runAction: async ({
-      providerId,
-      model,
-      kind,
-      sourceId,
-      prompt,
-      styleId,
-      strength,
-      mask,
-      detail,
-      count = 1,
-    }) => {
-      if (get().running) return;
+    dequeue: (id) => set((s) => ({ queue: s.queue.filter((j) => j.id !== id) })),
 
-      const doc = useDocument.getState();
-      const source = doc.layers.find((l) => l.id === sourceId);
-      if (!source?.src) {
-        set({ error: "Select a finished layer first." });
-        return;
-      }
-
-      const userPrompt = prompt?.trim() ?? "";
-      // The style override rides along as styleId; the /api/edit route composes
-      // it into the prompt server-side (same as /api/generate), so send raw.
-      const editPrompt = ACTIONS[kind].prompt(userPrompt);
-      // Content never mutates, so the img2img payload stays the original source.
-      const image = source.src;
-
-      const prevSelectedId = doc.selectedId;
-      // One controller for the whole action so cancel stops the remaining jobs.
-      const controller = new AbortController();
-      const jobs = Math.max(1, Math.min(4, count));
-
-      try {
-        for (let i = 0; i < jobs; i++) {
-          if (controller.signal.aborted) break;
-
-          // Re-resolve the live source each iteration — the user may rename or
-          // move it between jobs (its pixels never change), or delete it.
-          const live = useDocument.getState().layers.find((l) => l.id === sourceId);
-          if (!live) break;
-
-          // The result lands as a new layer offset above the source (screen 5).
-          // Create it first so the action can anchor its progress UI on it.
-          const editArea = kind === "edit-area";
-          const layerId = doc.addLayer(
-            {
-              name: ACTIONS[kind].layerName(live.name, i, jobs),
-              // Edit-area (inpaint) returns a full image whose unedited regions
-              // must line up with the source, so overlay it exactly in place;
-              // other actions offset the result above the source.
-              x: live.x + (editArea ? 0 : 46 + i * 22),
-              y: live.y + (editArea ? 0 : -36 + i * 22),
-              width: live.width,
-              height: live.height,
-              src: null,
-              status: "generating",
-              progress: 0,
-              prompt: kind === "variations" ? live.prompt : userPrompt || live.prompt,
-              derivedFrom: { id: live.id, name: live.name },
-            },
-            // A multi-job run (variations) is one undo unit: only the first
-            // placeholder records the pre-run snapshot; the rest add silently.
-            { history: i === 0 },
-          );
-
-          set({
-            action: {
-              kind,
-              sourceId: live.id,
-              sourceName: live.name,
-              placeholderId: layerId,
-              detail: detail ?? "img2img",
-              count: jobs,
-              index: i,
-            },
-          });
-
-          // Layer dims are display size (~320); scale up to generation pixels.
-          const { rw, rh } = requestSize(live.width, live.height);
-
-          await runStream(
-            layerId,
-            prevSelectedId,
-            // Remove background runs a local segmentation matte (any provider,
-            // any background); the rest go through the provider's edit endpoint.
-            kind === "remove-bg"
-              ? ({ signal, onEvent }) => localMatteJob(image, signal, onEvent)
-              : ({ signal, onEvent }) =>
-                  streamEdit(
-                    {
-                      providerId,
-                      model,
-                      prompt: editPrompt,
-                      styleId: kind === "remix" ? styleId : undefined,
-                      image,
-                      mode: kind === "edit-area" ? "inpaint" : "img2img",
-                      // Mask rides along only for inpaint; matches the source's pixels.
-                      mask: kind === "edit-area" ? mask : undefined,
-                      strength,
-                      width: rw,
-                      height: rh,
-                      // Distinct seed per variation so mock output actually differs.
-                      seed:
-                        kind === "variations"
-                          ? Math.floor(Math.random() * 1_000_000) + i
-                          : undefined,
-                    },
-                    { signal, onEvent },
-                  ),
-            controller,
-          );
-
-          // A provider failure surfaces an error and drops the placeholder;
-          // don't keep hammering the same provider for the remaining jobs.
-          if (get().error) break;
-        }
-      } finally {
-        set({ action: null });
-      }
-    },
+    clearQueue: () => set({ queue: [] }),
 
     cancel: () => {
       get().controller?.abort();

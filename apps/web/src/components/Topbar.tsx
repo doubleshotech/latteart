@@ -22,7 +22,6 @@ export function Topbar() {
   const setProvider = useSession((s) => s.setProvider);
   const openSettings = useSession((s) => s.openSettings);
   const layers = useDocument((s) => s.layers);
-  const running = useGeneration((s) => s.running);
   const merge = useGeneration((s) => s.merge);
   const saveStatus = useProject((s) => s.status);
 
@@ -34,7 +33,9 @@ export function Topbar() {
     : "Select provider";
 
   const hasImages = layers.some((l) => l.visible && l.src);
-  const canMerge = hasImages && !running && !!active?.available && active.capabilities.img2img;
+  // Merge stays clickable mid-run — it queues, and flattens whatever the
+  // canvas holds when its turn comes (including results of jobs ahead of it).
+  const canMerge = hasImages && !!active?.available && active.capabilities.img2img;
 
   const onExport = async () => {
     const flat = await flattenLayers(useDocument.getState().layers, { pixelRatio: 2 });
@@ -47,7 +48,7 @@ export function Topbar() {
 
   const onMerge = () => {
     if (!active) return;
-    void merge({ providerId: active.id, model: model ?? undefined });
+    merge({ providerId: active.id, model: model ?? undefined });
   };
 
   return (
@@ -189,14 +190,8 @@ export function Topbar() {
         <button
           type="button"
           onClick={onExport}
-          disabled={!hasImages || running}
-          title={
-            running
-              ? "Wait for the current generation to finish"
-              : hasImages
-                ? "Export — flatten visible layers to PNG"
-                : "Nothing to export yet"
-          }
+          disabled={!hasImages}
+          title={hasImages ? "Export — flatten visible layers to PNG" : "Nothing to export yet"}
           style={{
             display: "flex",
             alignItems: "center",
@@ -210,8 +205,8 @@ export function Topbar() {
             fontSize: 12,
             fontWeight: 500,
             fontFamily: "inherit",
-            cursor: hasImages && !running ? "pointer" : "not-allowed",
-            opacity: hasImages && !running ? 1 : 0.5,
+            cursor: hasImages ? "pointer" : "not-allowed",
+            opacity: hasImages ? 1 : 0.5,
           }}
         >
           <Download size={15} strokeWidth={1.7} />
