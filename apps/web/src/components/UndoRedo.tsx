@@ -10,7 +10,9 @@ const MOD = isMac ? "⌘" : "Ctrl+";
 export function UndoRedo() {
   const canUndo = useHistory((s) => s.canUndo);
   const canRedo = useHistory((s) => s.canRedo);
-  const running = useGeneration((s) => s.running || s.action !== null);
+  // Matches history's blocked(): only the executing job holds undo/redo —
+  // jobs waiting in the queue don't.
+  const running = useGeneration((s) => s.busy);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

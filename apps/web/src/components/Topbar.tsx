@@ -1,4 +1,5 @@
-import { Download, Settings, Sparkles } from "lucide-react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { ChevronDown, Download, Settings, Sparkles } from "lucide-react";
 import { LogoMark } from "./LogoMark";
 import { flattenLayers } from "../lib/flatten";
 import { useDocument } from "../stores/documentStore";
@@ -18,20 +19,24 @@ export function Topbar() {
   const providers = useProviders((s) => s.providers);
   const providerId = useSession((s) => s.providerId);
   const model = useSession((s) => s.model);
+  const setProvider = useSession((s) => s.setProvider);
   const openSettings = useSession((s) => s.openSettings);
   const layers = useDocument((s) => s.layers);
-  const running = useGeneration((s) => s.running);
   const merge = useGeneration((s) => s.merge);
+  const busy = useGeneration((s) => s.busy);
   const saveStatus = useProject((s) => s.status);
 
   const active = providers.find((p) => p.id === providerId);
-  const keyed = active?.kind === "cloud" && active.hasKey;
-  const statusLabel = active
-    ? `${active.label}${active.kind === "local" ? " · local" : keyed ? " · key set" : ""}`
-    : "No provider";
+  const activeModelLabel =
+    active?.models.find((m) => m.id === model)?.label ?? active?.models[0]?.label ?? "";
+  const pickerLabel = active
+    ? `${active.label}${activeModelLabel ? ` · ${activeModelLabel}` : ""}`
+    : "Select provider";
 
   const hasImages = layers.some((l) => l.visible && l.src);
-  const canMerge = hasImages && !running && !!active?.available && active.capabilities.img2img;
+  // Merge stays clickable mid-run — it queues, and flattens whatever the
+  // canvas holds when its turn comes (including results of jobs ahead of it).
+  const canMerge = hasImages && !!active?.available && active.capabilities.img2img;
 
   const onExport = async () => {
     const flat = await flattenLayers(useDocument.getState().layers, { pixelRatio: 2 });
@@ -44,7 +49,7 @@ export function Topbar() {
 
   const onMerge = () => {
     if (!active) return;
-    void merge({ providerId: active.id, model: model ?? undefined });
+    merge({ providerId: active.id, model: model ?? undefined });
   };
 
   return (
@@ -79,31 +84,75 @@ export function Topbar() {
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 7,
-            height: 30,
-            padding: "0 11px",
-            borderRadius: 8,
-            background: "var(--surface-2)",
-            border: "1px solid var(--border)",
-            fontSize: 12,
-            color: "var(--text-muted)",
-          }}
-        >
-          <span
-            style={{
-              width: 6,
-              height: 6,
-              borderRadius: 9,
-              background: keyed ? "var(--ok)" : "#8a8f98",
-              boxShadow: keyed ? "0 0 8px rgba(62,207,142,.7)" : "none",
-            }}
-          />
-          <span style={{ color: "var(--text)", fontWeight: 500 }}>{statusLabel}</span>
-        </div>
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild>
+            <button
+              type="button"
+              title="Provider & model used for generations"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 7,
+                height: 30,
+                padding: "0 11px",
+                borderRadius: 8,
+                background: "var(--surface-2)",
+                border: "1px solid var(--border)",
+                color: "var(--text)",
+                fontSize: 12,
+                fontWeight: 500,
+                fontFamily: "inherit",
+                cursor: "pointer",
+              }}
+            >
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: 9,
+                  background: active?.available ? "var(--ok)" : "#8a8f98",
+                  boxShadow: active?.available ? "0 0 8px rgba(62,207,142,.7)" : "none",
+                }}
+              />
+              {pickerLabel}
+              <ChevronDown size={13} strokeWidth={1.9} color="var(--text-faint)" />
+            </button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content className="dd-content" sideOffset={8} align="end">
+              {providers.map((p) => (
+                <DropdownMenu.Item
+                  key={p.id}
+                  className="dd-item"
+                  onSelect={() =>
+                    p.available ? setProvider(p.id, p.models[0]?.id ?? null) : openSettings()
+                  }
+                >
+                  <span
+                    style={{
+                      width: 7,
+                      height: 7,
+                      borderRadius: 9,
+                      flex: "none",
+                      background: p.available ? "var(--ok)" : "var(--text-faint)",
+                    }}
+                  />
+                  <span style={{ flex: 1 }}>
+                    {p.label}
+                    <span style={{ color: "var(--text-faint)" }}>
+                      {p.models[0] ? ` · ${p.models[0].label}` : ""}
+                    </span>
+                  </span>
+                  {!p.available && (
+                    <span style={{ fontSize: 10.5, color: "var(--text-faint)" }}>
+                      {p.requiresKey ? "needs key" : "connect"}
+                    </span>
+                  )}
+                </DropdownMenu.Item>
+              ))}
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
 
         <button
           type="button"
@@ -142,10 +191,10 @@ export function Topbar() {
         <button
           type="button"
           onClick={onExport}
-          disabled={!hasImages || running}
+          disabled={!hasImages || busy}
           title={
-            running
-              ? "Wait for the current generation to finish"
+            busy
+              ? "Wait for the current generation — export would omit the in-progress layer"
               : hasImages
                 ? "Export — flatten visible layers to PNG"
                 : "Nothing to export yet"
@@ -163,8 +212,8 @@ export function Topbar() {
             fontSize: 12,
             fontWeight: 500,
             fontFamily: "inherit",
-            cursor: hasImages && !running ? "pointer" : "not-allowed",
-            opacity: hasImages && !running ? 1 : 0.5,
+            cursor: hasImages && !busy ? "pointer" : "not-allowed",
+            opacity: hasImages && !busy ? 1 : 0.5,
           }}
         >
           <Download size={15} strokeWidth={1.7} />

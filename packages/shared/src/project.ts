@@ -39,6 +39,8 @@ export interface ProjectSession {
   model: string | null;
   size: { w: number; h: number; label: string };
   styleId: string;
+  /** "Cutout" toggle. Optional so projects saved before it still load. */
+  isolate?: boolean;
 }
 
 export interface ProjectDoc {

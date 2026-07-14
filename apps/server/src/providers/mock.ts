@@ -153,11 +153,7 @@ export const mockProvider: ImageProvider = {
     return {
       id: crypto.randomUUID(),
       images: [
-        {
-          dataUrl: placeholderSvg(`edit · ${req.prompt}`, width, height, seed),
-          width,
-          height,
-        },
+        { dataUrl: placeholderSvg(`edit · ${req.prompt}`, width, height, seed), width, height },
       ],
       provider: "mock",
       model: req.model ?? "mock-diffusion",

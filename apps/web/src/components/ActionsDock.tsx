@@ -128,19 +128,19 @@ export function ActionsDock({ layer }: { layer: Layer }) {
   const openAction = useSession((s) => s.openAction);
   const openSettings = useSession((s) => s.openSettings);
 
-  const running = useGeneration((s) => s.running);
   const runAction = useGeneration((s) => s.runAction);
 
   const openMaskEdit = useSession((s) => s.openMaskEdit);
 
   const active = providers.find((p) => p.id === providerId);
-  const canEdit = !!active?.available && active.capabilities.img2img && !running;
+  // Not gated on a running job — actions submitted mid-run join the queue.
+  const canEdit = !!active?.available && active.capabilities.img2img;
   // Provider is keyed but can't do img2img — disable the actions (guard still
   // redirects unkeyed providers to Settings); the wrapper title explains why.
   const noImg2img = !!active?.available && !active.capabilities.img2img;
   // Edit area needs a mask-capable (inpaint) provider — a separate capability
   // from img2img, so it must NOT be gated on canEdit/guard() below.
-  const canInpaint = !!active?.available && !!active.capabilities.inpaint && !running;
+  const canInpaint = !!active?.available && !!active.capabilities.inpaint;
   const noInpaint = !!active?.available && !active.capabilities.inpaint;
   const inpaintTitle = !active?.available
     ? "Connect a provider in Settings"
@@ -267,37 +267,36 @@ export function ActionsDock({ layer }: { layer: Layer }) {
           tag="img2img"
           drillIn
           accent
-          disabled={running || noImg2img}
+          disabled={noImg2img}
           onClick={guard(() => openAction("remix", layer.id))}
         />
         <ActionRow
           icon={<Eraser size={15} strokeWidth={1.7} />}
           label="Remove background"
           tag="1-click"
-          disabled={running || noImg2img}
-          onClick={guard(
-            () =>
-              void runAction({
-                providerId: active!.id,
-                model: model ?? undefined,
-                kind: "remove-bg",
-                sourceId: layer.id,
-                detail: `img2img · ${active!.label}`,
-              }),
+          disabled={noImg2img}
+          onClick={guard(() =>
+            runAction({
+              providerId: active!.id,
+              model: model ?? undefined,
+              kind: "remove-bg",
+              sourceId: layer.id,
+              detail: `img2img · ${active!.label}`,
+            }),
           )}
         />
         <ActionRow
           icon={<ImageIcon size={15} strokeWidth={1.7} />}
           label="Change background"
           drillIn
-          disabled={running || noImg2img}
+          disabled={noImg2img}
           onClick={guard(() => openAction("change-bg", layer.id))}
         />
         <ActionRow
           icon={<LayoutGrid size={15} strokeWidth={1.7} />}
           label="Variations"
           drillIn
-          disabled={running || noImg2img}
+          disabled={noImg2img}
           onClick={guard(() => openAction("variations", layer.id))}
         />
         {/* Edit area — inpaint; needs a mask-capable provider. Enabled when no
@@ -309,7 +308,7 @@ export function ActionsDock({ layer }: { layer: Layer }) {
             label="Edit area"
             tag="inpaint"
             drillIn
-            disabled={running || noInpaint}
+            disabled={noInpaint}
             onClick={() => {
               if (!active?.available) {
                 openSettings();

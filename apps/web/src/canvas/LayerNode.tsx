@@ -1,11 +1,15 @@
 import { useEffect } from "react";
-import { Image as KonvaImage } from "react-konva";
+import { Group, Image as KonvaImage, Rect } from "react-konva";
 import type Konva from "konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import { useImage } from "../lib/useImage";
+import { useHasAlpha } from "../lib/useHasAlpha";
+import { checkerPattern } from "../lib/checkerboard";
 import { useDocument, type Layer } from "../stores/documentStore";
 
-/** A ready image layer: draggable, selectable, transformable Konva.Image. */
+const CORNER = 4;
+
+/** A ready image layer: draggable, selectable, transformable Konva node. */
 export function LayerNode({
   layer,
   registerRef,
@@ -14,7 +18,9 @@ export function LayerNode({
   registerRef: (id: string, node: Konva.Node | null) => void;
 }) {
   const img = useImage(layer.src);
+  const hasAlpha = useHasAlpha(img, layer.src);
   const select = useDocument((s) => s.select);
+  const selected = useDocument((s) => s.selectedId === layer.id);
   const updateLayer = useDocument((s) => s.updateLayer);
 
   // Fit the layer to the real image's aspect once it loads — providers return
@@ -39,20 +45,17 @@ export function LayerNode({
 
   if (!layer.visible) return null;
 
+  // Back a transparent layer with a checkerboard while it's selected, so its
+  // cut-out areas read as transparency. Left off when unselected: this is a
+  // free multi-layer canvas, so an always-on backing would occlude whatever
+  // sits beneath the layer instead of compositing through it.
+  const showChecker = hasAlpha && selected;
+
   return (
-    <KonvaImage
-      image={img ?? undefined}
+    <Group
       x={layer.x}
       y={layer.y}
-      width={layer.width}
-      height={layer.height}
       rotation={layer.rotation}
-      opacity={layer.opacity}
-      cornerRadius={4}
-      shadowColor="#000000"
-      shadowBlur={26}
-      shadowOpacity={0.5}
-      shadowOffsetY={14}
       draggable
       ref={(node) => registerRef(layer.id, node)}
       onMouseDown={() => select(layer.id)}
@@ -61,7 +64,7 @@ export function LayerNode({
         updateLayer(layer.id, { x: e.target.x(), y: e.target.y() })
       }
       onTransformEnd={(e: KonvaEventObject<Event>) => {
-        const node = e.target as Konva.Image;
+        const node = e.target as Konva.Group;
         const sx = node.scaleX();
         const sy = node.scaleY();
         node.scaleX(1);
@@ -69,11 +72,34 @@ export function LayerNode({
         updateLayer(layer.id, {
           x: node.x(),
           y: node.y(),
-          width: Math.max(24, node.width() * sx),
-          height: Math.max(24, node.height() * sy),
+          width: Math.max(24, layer.width * sx),
+          height: Math.max(24, layer.height * sy),
           rotation: node.rotation(),
         });
       }}
-    />
+    >
+      {showChecker && (
+        <Rect
+          width={layer.width}
+          height={layer.height}
+          cornerRadius={CORNER}
+          fillPatternImage={checkerPattern()}
+          fillPatternRepeat="repeat"
+          opacity={layer.opacity}
+          listening={false}
+        />
+      )}
+      <KonvaImage
+        image={img ?? undefined}
+        width={layer.width}
+        height={layer.height}
+        opacity={layer.opacity}
+        cornerRadius={CORNER}
+        shadowColor="#000000"
+        shadowBlur={26}
+        shadowOpacity={0.5}
+        shadowOffsetY={14}
+      />
+    </Group>
   );
 }
