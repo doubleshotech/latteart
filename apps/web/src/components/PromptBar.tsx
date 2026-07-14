@@ -328,6 +328,9 @@ export function PromptBar() {
       height: size.h,
       isolate,
     });
+    // Consume the draft so the field is ready for the next prompt (and the
+    // "…it queues up" placeholder shows) — re-Enter can't re-submit the same one.
+    setPrompt("");
   };
 
   return (

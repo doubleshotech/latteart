@@ -23,6 +23,7 @@ export function Topbar() {
   const openSettings = useSession((s) => s.openSettings);
   const layers = useDocument((s) => s.layers);
   const merge = useGeneration((s) => s.merge);
+  const busy = useGeneration((s) => s.busy);
   const saveStatus = useProject((s) => s.status);
 
   const active = providers.find((p) => p.id === providerId);
@@ -190,8 +191,14 @@ export function Topbar() {
         <button
           type="button"
           onClick={onExport}
-          disabled={!hasImages}
-          title={hasImages ? "Export — flatten visible layers to PNG" : "Nothing to export yet"}
+          disabled={!hasImages || busy}
+          title={
+            busy
+              ? "Wait for the current generation — export would omit the in-progress layer"
+              : hasImages
+                ? "Export — flatten visible layers to PNG"
+                : "Nothing to export yet"
+          }
           style={{
             display: "flex",
             alignItems: "center",
@@ -205,8 +212,8 @@ export function Topbar() {
             fontSize: 12,
             fontWeight: 500,
             fontFamily: "inherit",
-            cursor: hasImages ? "pointer" : "not-allowed",
-            opacity: hasImages ? 1 : 0.5,
+            cursor: hasImages && !busy ? "pointer" : "not-allowed",
+            opacity: hasImages && !busy ? 1 : 0.5,
           }}
         >
           <Download size={15} strokeWidth={1.7} />
