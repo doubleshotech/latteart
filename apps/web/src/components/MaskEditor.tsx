@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Eraser, SquareDashed, X } from "lucide-react";
+import { Eraser, SquareDashed, Undo2, Wand2, X } from "lucide-react";
+import { rewriteInpaintInstruction } from "../api/inpaintPrompt";
 import type { Layer } from "../stores/documentStore";
 import { useDocument } from "../stores/documentStore";
 import { useGeneration } from "../stores/generationStore";
@@ -53,6 +54,30 @@ export function strokesToMaskDataUrl(strokes: Stroke[], width: number, height: n
 const MASK_TINT = "rgba(238,161,69,0.55)";
 const MAX_BOX = { w: 640, h: 460 };
 
+/** Square icon affordance beside the fill input (rewrite / undo). */
+const iconBtn: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 40,
+  height: 40,
+  borderRadius: 10,
+  background: "var(--surface-2)",
+  border: "1px solid var(--border)",
+  color: "var(--text-muted)",
+  cursor: "pointer",
+  flex: "none",
+};
+
+const spinner: React.CSSProperties = {
+  width: 15,
+  height: 15,
+  borderRadius: "50%",
+  border: "2.4px solid rgba(255,255,255,0.12)",
+  borderTopColor: "var(--accent)",
+  animation: "latte-spin 0.9s linear infinite",
+};
+
 /** Fit natural dims into MAX_BOX, preserving aspect. */
 function fit(nw: number, nh: number): { w: number; h: number } {
   const r = Math.min(MAX_BOX.w / nw, MAX_BOX.h / nh, 1);
@@ -63,8 +88,10 @@ function Editor({ source }: { source: Layer }) {
   const closeMaskEdit = useSession((s) => s.closeMaskEdit);
   const providerId = useSession((s) => s.providerId);
   const model = useSession((s) => s.model);
+  const llmProviderId = useSession((s) => s.llmProviderId);
   const providers = useProviders((s) => s.providers);
   const runAction = useGeneration((s) => s.runAction);
+  const setError = useGeneration((s) => s.setError);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const strokesRef = useRef<Stroke[]>([]);
@@ -72,6 +99,10 @@ function Editor({ source }: { source: Layer }) {
   const [nat, setNat] = useState<{ w: number; h: number } | null>(null);
   const [brush, setBrush] = useState(36);
   const [prompt, setPrompt] = useState("");
+  const [rewriting, setRewriting] = useState(false);
+  // The pre-rewrite instruction, so a single tap reverts. Cleared once edited.
+  const [preRewrite, setPreRewrite] = useState<string | null>(null);
+  const rewriteCtl = useRef<AbortController | null>(null);
   const [, force] = useState(0);
   const rerender = () => force((n) => n + 1);
 
@@ -82,6 +113,7 @@ function Editor({ source }: { source: Layer }) {
   // mask is captured now, so later canvas changes can't skew it).
   const canGenerate =
     !!active?.available && !!active.capabilities.inpaint && hasStrokes && !!prompt.trim();
+  const canRewrite = prompt.trim().length > 0 && !rewriting;
 
   // Load the source to learn its native pixel size (the mask's resolution).
   useEffect(() => {
@@ -116,6 +148,9 @@ function Editor({ source }: { source: Layer }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [closeMaskEdit]);
+
+  // Abort an in-flight rewrite if the editor closes.
+  useEffect(() => () => rewriteCtl.current?.abort(), []);
 
   const redraw = () => {
     const canvas = canvasRef.current;
@@ -173,6 +208,49 @@ function Editor({ source }: { source: Layer }) {
     strokesRef.current = [];
     redraw();
     rerender();
+  };
+
+  /** Type in the fill field. A manual edit supersedes any in-flight rewrite (so
+   * its result can't clobber what the user just typed) and, once applied,
+   * invalidates the revert target. */
+  const editPrompt = (value: string) => {
+    setPrompt(value);
+    rewriteCtl.current?.abort();
+    if (preRewrite !== null) setPreRewrite(null);
+  };
+
+  /** Rewrite the terse instruction into a detailed inpaint fill-prompt via the
+   * local LLM, passing the source layer's own prompt as context for coherence. */
+  const runRewrite = async () => {
+    const text = prompt.trim();
+    if (!text || rewriting) return;
+    rewriteCtl.current?.abort();
+    const ctl = new AbortController();
+    rewriteCtl.current = ctl;
+    setRewriting(true);
+    try {
+      const { prompt: rewritten } = await rewriteInpaintInstruction(
+        text,
+        llmProviderId,
+        source.prompt || undefined,
+        ctl.signal,
+      );
+      if (ctl.signal.aborted) return;
+      setPreRewrite(prompt);
+      setPrompt(rewritten);
+    } catch (err) {
+      if (!ctl.signal.aborted)
+        setError((err as Error).message || "Couldn't rewrite the instruction.");
+    } finally {
+      if (rewriteCtl.current === ctl) rewriteCtl.current = null;
+      setRewriting(false);
+    }
+  };
+
+  const revertRewrite = () => {
+    if (preRewrite === null) return;
+    setPrompt(preRewrite);
+    setPreRewrite(null);
   };
 
   const generate = () => {
@@ -391,11 +469,11 @@ function Editor({ source }: { source: Layer }) {
         >
           <input
             value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
+            onChange={(e) => editPrompt(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") generate();
             }}
-            placeholder="Describe what should fill the painted area…"
+            placeholder="Describe the change in plain words…"
             style={{
               flex: 1,
               height: 40,
@@ -409,6 +487,37 @@ function Editor({ source }: { source: Layer }) {
               outline: "none",
             }}
           />
+
+          {/* revert to the pre-rewrite instruction — only right after a rewrite */}
+          {preRewrite !== null && (
+            <button
+              type="button"
+              onClick={revertRewrite}
+              title="Undo rewrite — restore your instruction"
+              aria-label="Undo rewrite"
+              style={{ ...iconBtn, color: "var(--text-faint)" }}
+            >
+              <Undo2 size={15} strokeWidth={1.9} />
+            </button>
+          )}
+
+          {/* ✨ rewrite the terse instruction into a detailed fill prompt */}
+          <button
+            type="button"
+            onClick={runRewrite}
+            disabled={!canRewrite}
+            title="Rewrite — expand your instruction into a detailed fill prompt via a local LLM"
+            aria-label="Rewrite instruction"
+            style={{
+              ...iconBtn,
+              color: canRewrite ? "var(--accent)" : "var(--text-faint)",
+              cursor: canRewrite ? "pointer" : "not-allowed",
+              opacity: prompt.trim().length > 0 ? 1 : 0.5,
+            }}
+          >
+            {rewriting ? <span style={spinner} /> : <Wand2 size={16} strokeWidth={1.8} />}
+          </button>
+
           <button
             type="button"
             disabled={!canGenerate}

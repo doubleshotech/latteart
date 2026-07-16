@@ -9,6 +9,8 @@ import type {
   EnhanceApiResponse,
   GenResult,
   GenerateRequest,
+  InpaintPromptApiRequest,
+  InpaintPromptApiResponse,
   LLMContext,
   LLMProviderDescriptor,
   ProgressEvent,
@@ -280,6 +282,35 @@ const routes = app
       return c.json({ prompt: enhanced, provider: llm.label } satisfies EnhanceApiResponse);
     } catch (err) {
       const message = (err as Error)?.message ?? "prompt enhancement failed";
+      return c.json({ error: message }, 502);
+    }
+  })
+
+  // Inpaint-instruction rewrite (Phase 2 assist). Turns a terse edit instruction
+  // for a masked region into a coherent fill-prompt via the same LLM axis as
+  // /api/enhance — a different task (region fill, not whole scene), same engine
+  // resolution. Non-streaming; a providerId pins the engine, else auto-resolve.
+  .post("/api/inpaint-prompt", async (c) => {
+    const body = await c.req
+      .json<Partial<InpaintPromptApiRequest>>()
+      .catch(() => ({}) as Partial<InpaintPromptApiRequest>);
+    const instruction = String(body.instruction ?? "").trim();
+    if (!instruction) return c.json({ error: "instruction is required" }, 400);
+    const context = body.context === undefined ? undefined : String(body.context);
+
+    const providerId = body.providerId === undefined ? undefined : String(body.providerId);
+    const ctxFor = (id: string): LLMContext => ({ baseUrl: getSecretValue(id) });
+    const llm = await resolveLLMProvider(providerId, ctxFor);
+    try {
+      const prompt = await llm.rewriteInpaintInstruction(
+        instruction,
+        ctxFor(llm.id),
+        c.req.raw.signal,
+        context,
+      );
+      return c.json({ prompt, provider: llm.label } satisfies InpaintPromptApiResponse);
+    } catch (err) {
+      const message = (err as Error)?.message ?? "inpaint prompt rewrite failed";
       return c.json({ error: message }, 502);
     }
   });

@@ -18,6 +18,8 @@ export type {
   GenerateApiResponse,
   EnhanceApiRequest,
   EnhanceApiResponse,
+  InpaintPromptApiRequest,
+  InpaintPromptApiResponse,
 } from "./types.ts";
 
 export type { StylePreset } from "./styles.ts";

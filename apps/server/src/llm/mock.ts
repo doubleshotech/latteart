@@ -14,6 +14,14 @@ const MODIFIERS = [
   "sharp focus",
 ];
 
+/** Blend modifiers the offline enhancer appends to an inpaint fill so the mock
+ * fill-prompt reads like a region description that matches its surroundings. */
+const INPAINT_MODIFIERS = [
+  "seamlessly blended",
+  "matching the surrounding lighting",
+  "consistent perspective",
+];
+
 /**
  * Offline prompt enhancer. No network, no key — always available, so the
  * registry can fall back to it when no real LLM is installed.
@@ -29,11 +37,21 @@ export const mockLLMProvider: LLMProvider = {
 
   // ctx/signal are unused — this enhancer is synchronous and endpoint-free.
   async enhancePrompt(prompt: string): Promise<string> {
-    const base = prompt.trim().replace(/[\s.,]+$/, "");
-    if (!base) return prompt;
-    // Deterministic: append only modifiers the prompt doesn't already mention.
-    const lower = base.toLowerCase();
-    const extras = MODIFIERS.filter((m) => !lower.includes(m));
-    return extras.length ? `${base}, ${extras.join(", ")}` : base;
+    return appendUnique(prompt, MODIFIERS);
+  },
+
+  // Deterministic offline inpaint rewrite: append blend modifiers so the fill
+  // reads as a region description. context is ignored (no reasoning offline).
+  async rewriteInpaintInstruction(instruction: string): Promise<string> {
+    return appendUnique(instruction, INPAINT_MODIFIERS);
   },
 };
+
+/** Trim trailing punctuation and append only modifiers not already present. */
+function appendUnique(text: string, modifiers: string[]): string {
+  const base = text.trim().replace(/[\s.,]+$/, "");
+  if (!base) return text;
+  const lower = base.toLowerCase();
+  const extras = modifiers.filter((m) => !lower.includes(m));
+  return extras.length ? `${base}, ${extras.join(", ")}` : base;
+}

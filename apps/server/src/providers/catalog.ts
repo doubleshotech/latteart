@@ -100,7 +100,8 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     kind: "local",
     blurb: "Offline placeholder generator · no key needed",
     requiresKey: false,
-    capabilities: caps({ txt2img: true, img2img: true }),
+    // Inpaint composites through the mask (SVG), so Edit area works offline.
+    capabilities: caps({ txt2img: true, img2img: true, inpaint: true }),
     models: [{ id: "mock-diffusion", label: "Mock Diffusion" }],
     implemented: true,
   },

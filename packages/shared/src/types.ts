@@ -167,6 +167,20 @@ export interface LLMProvider {
    */
   isAvailable(ctx?: LLMContext): Promise<boolean>;
   enhancePrompt(prompt: string, ctx?: LLMContext, signal?: AbortSignal): Promise<string>;
+  /**
+   * Rewrite a terse natural-language edit instruction into a clean inpaint
+   * fill-prompt — a description of only what should occupy the masked region,
+   * blended to match the surrounding image. A distinct task from
+   * {@link enhancePrompt}, which rewrites a whole-scene generation prompt.
+   * `context` is an optional description of the source image (the layer's own
+   * prompt) so the fill stays coherent with it.
+   */
+  rewriteInpaintInstruction(
+    instruction: string,
+    ctx?: LLMContext,
+    signal?: AbortSignal,
+    context?: string,
+  ): Promise<string>;
 }
 
 /** Safe, public description of an LLM enhancement engine sent to the frontend. */
@@ -225,5 +239,26 @@ export interface EnhanceApiResponse {
   /** The rewritten, more descriptive image prompt. */
   prompt: string;
   /** Human label of the engine that produced it (e.g. "Ollama", "Offline enhancer"). */
+  provider: string;
+}
+
+/**
+ * Request body for `POST /api/inpaint-prompt` — rewrite a terse edit instruction
+ * for a masked region into a coherent inpaint fill-prompt.
+ */
+export interface InpaintPromptApiRequest {
+  /** The user's terse instruction for what should fill the painted area. */
+  instruction: string;
+  /** Optional description of the source image (the layer's prompt) for coherence. */
+  context?: string;
+  /** Optional explicit LLM provider id; omitted → the server picks the best available. */
+  providerId?: string;
+}
+
+/** Response from `POST /api/inpaint-prompt`. */
+export interface InpaintPromptApiResponse {
+  /** The rewritten inpaint fill-prompt describing the masked region's content. */
+  prompt: string;
+  /** Human label of the engine that produced it. */
   provider: string;
 }
