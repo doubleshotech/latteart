@@ -1,5 +1,6 @@
 import type { ImageProvider } from "@latteart/shared";
 import { comfyuiProvider } from "./comfyui.ts";
+import { falProvider } from "./fal.ts";
 import { geminiProvider } from "./gemini.ts";
 import { mockProvider } from "./mock.ts";
 
@@ -26,6 +27,7 @@ registerProvider(mockProvider);
 
 // Cloud providers (usable once the user adds a key in Settings).
 registerProvider(geminiProvider);
+registerProvider(falProvider);
 
 // Local engines (usable when the app is running on this machine).
 registerProvider(comfyuiProvider);

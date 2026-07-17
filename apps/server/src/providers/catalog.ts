@@ -33,20 +33,19 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     id: "fal",
     label: "Fal.ai",
     kind: "cloud",
-    blurb: "FLUX, SDXL, LoRAs · fast cloud",
+    blurb: "FLUX.1 [dev] · [schnell] · fast cloud",
     requiresKey: true,
-    capabilities: caps({
-      txt2img: true,
-      img2img: true,
-      inpaint: true,
-      transparentLayers: true,
-      upscale: true,
-    }),
+    // v1 drives txt2img + img2img (FLUX). Inpaint, transparent-layer output, and
+    // upscale are separate Fal endpoints for later — capabilities gate the UI,
+    // so only claim what the provider actually implements.
+    capabilities: caps({ txt2img: true, img2img: true }),
+    // schnell first: the UI defaults a provider to models[0], and schnell is
+    // the fast/cheap default we want for exploration (dev is the quality option).
     models: [
-      { id: "fal-ai/flux/dev", label: "FLUX.1 [dev]" },
       { id: "fal-ai/flux/schnell", label: "FLUX.1 [schnell]" },
+      { id: "fal-ai/flux/dev", label: "FLUX.1 [dev]" },
     ],
-    implemented: false,
+    implemented: true,
     keyPlaceholder: "Paste your Fal API key…",
   },
   {
