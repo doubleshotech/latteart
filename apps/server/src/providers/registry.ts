@@ -3,6 +3,7 @@ import { comfyuiProvider } from "./comfyui.ts";
 import { falProvider } from "./fal.ts";
 import { geminiProvider } from "./gemini.ts";
 import { mockProvider } from "./mock.ts";
+import { openaiProvider } from "./openai.ts";
 
 /**
  * Runtime registry of providers the backend can actually generate against.
@@ -28,6 +29,7 @@ registerProvider(mockProvider);
 // Cloud providers (usable once the user adds a key in Settings).
 registerProvider(geminiProvider);
 registerProvider(falProvider);
+registerProvider(openaiProvider);
 
 // Local engines (usable when the app is running on this machine).
 registerProvider(comfyuiProvider);
