@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { ProgressEvent } from "@latteart/shared";
 import { ACTIONS, isInpaintKind, type ActionKind } from "../lib/actions";
-import { streamEdit, streamGenerate } from "../api/generate";
+import { streamEdit, streamGenerate, streamUpscale } from "../api/generate";
 import { flattenLayers } from "../lib/flatten";
 import { keyFlatBackground } from "../lib/keyFlatBackground";
 import { removeBackgroundAI } from "../lib/removeBackgroundAI";
@@ -119,6 +119,8 @@ interface RunActionOpts {
   styleId?: string;
   /** img2img similarity → denoising strength, 0..1. */
   strength?: number;
+  /** Output multiplier for `upscale` (2 or 4); ignored by other kinds. */
+  scale?: 2 | 4;
   /** Inpaint mask (white = regenerate) as a data: URL — edit-area only. */
   mask?: string;
   /** Toast subline, e.g. "img2img · Gemini · quite similar". */
@@ -442,6 +444,7 @@ export const useGeneration = create<GenerationState>((set, get) => {
     prompt,
     styleId,
     strength,
+    scale,
     mask,
     detail,
     count = 1,
@@ -520,29 +523,38 @@ export const useGeneration = create<GenerationState>((set, get) => {
           layerId,
           prevSelectedId,
           // Remove background runs a local segmentation matte (any provider,
-          // any background); the rest go through the provider's edit endpoint.
+          // any background); upscale hits the prompt-less /api/upscale endpoint;
+          // the rest go through the provider's edit endpoint.
           kind === "remove-bg"
             ? ({ signal, onEvent }) => localMatteJob(image, signal, onEvent)
-            : ({ signal, onEvent }) =>
-                streamEdit(
-                  {
-                    providerId,
-                    model,
-                    prompt: editPrompt,
-                    styleId: kind === "remix" ? styleId : undefined,
-                    image,
-                    mode: inpaint ? "inpaint" : "img2img",
-                    // Mask rides along only for inpaint; matches the source's pixels.
-                    mask: inpaint ? mask : undefined,
-                    strength,
-                    width: rw,
-                    height: rh,
-                    // Distinct seed per variation so mock output actually differs.
-                    seed:
-                      kind === "variations" ? Math.floor(Math.random() * 1_000_000) + i : undefined,
-                  },
-                  { signal, onEvent },
-                ),
+            : kind === "upscale"
+              ? ({ signal, onEvent }) =>
+                  streamUpscale(
+                    { providerId, model, image, scale: scale === 4 ? 4 : 2 },
+                    { signal, onEvent },
+                  )
+              : ({ signal, onEvent }) =>
+                  streamEdit(
+                    {
+                      providerId,
+                      model,
+                      prompt: editPrompt,
+                      styleId: kind === "remix" ? styleId : undefined,
+                      image,
+                      mode: inpaint ? "inpaint" : "img2img",
+                      // Mask rides along only for inpaint; matches the source's pixels.
+                      mask: inpaint ? mask : undefined,
+                      strength,
+                      width: rw,
+                      height: rh,
+                      // Distinct seed per variation so mock output actually differs.
+                      seed:
+                        kind === "variations"
+                          ? Math.floor(Math.random() * 1_000_000) + i
+                          : undefined,
+                    },
+                    { signal, onEvent },
+                  ),
           controller,
         );
 

@@ -5,6 +5,7 @@ export type {
   GenerateRequest,
   EditMode,
   EditRequest,
+  UpscaleRequest,
   GeneratedImage,
   GenResult,
   ProgressEvent,

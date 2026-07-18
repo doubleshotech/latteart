@@ -6,6 +6,7 @@ import type {
   ImageProvider,
   ModelInfo,
   ProviderContext,
+  UpscaleRequest,
 } from "@latteart/shared";
 
 /** Deterministic 32-bit FNV-1a hash so a prompt always maps to the same look. */
@@ -125,8 +126,15 @@ export const mockProvider: ImageProvider = {
   requiresKey: false,
   // Inpaint honored via SVG mask compositing (see edit()), so the whole
   // edit-area flow verifies offline on the default provider. img2img still
-  // emits a fresh placeholder.
-  capabilities: { ...noCapabilities(), txt2img: true, img2img: true, inpaint: true },
+  // emits a fresh placeholder. Upscale (see upscale()) echoes the source so the
+  // Upscale action runs end-to-end offline too.
+  capabilities: {
+    ...noCapabilities(),
+    txt2img: true,
+    img2img: true,
+    inpaint: true,
+    upscale: true,
+  },
 
   async listModels(): Promise<ModelInfo[]> {
     return [{ id: "mock-diffusion", label: "Mock Diffusion" }];
@@ -197,6 +205,33 @@ export const mockProvider: ImageProvider = {
       provider: "mock",
       model: req.model ?? "mock-diffusion",
       seed,
+      createdAt: Date.now(),
+    };
+  },
+
+  /**
+   * Mock upscale. A real upscaler adds pixels while the image looks the same at
+   * display size, so the honest offline stand-in echoes the source back — the
+   * whole Upscale action (progress, cancel, new derived layer) still exercises
+   * end-to-end with no key and no raster library. `width`/`height` are reported
+   * as 0: the source's true pixel size isn't known without decoding the data
+   * URL, and it doesn't matter — the caller keeps the layer's on-canvas footprint.
+   */
+  async upscale(
+    req: UpscaleRequest,
+    ctx: ProviderContext,
+    signal?: AbortSignal,
+  ): Promise<GenResult> {
+    const totalSteps = 12;
+    for (let step = 1; step <= totalSteps; step++) {
+      await delay(60, signal);
+      ctx.onProgress?.(Math.round((step / totalSteps) * 100), { step, totalSteps });
+    }
+    return {
+      id: crypto.randomUUID(),
+      images: [{ dataUrl: req.image, width: 0, height: 0 }],
+      provider: "mock",
+      model: req.model ?? "mock-upscale",
       createdAt: Date.now(),
     };
   },

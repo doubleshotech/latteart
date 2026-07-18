@@ -2,6 +2,7 @@ import {
   Eraser,
   Image as ImageIcon,
   LayoutGrid,
+  Maximize2,
   Repeat2,
   SquareDashed,
   Wand2,
@@ -9,15 +10,16 @@ import {
 } from "lucide-react";
 import type { Provider } from "../api/client";
 
-/** Editor actions that run against a single source layer (img2img, or inpaint
- * for edit-area / smart-edit). */
+/** Editor actions that run against a single source layer (img2img, inpaint for
+ * edit-area / smart-edit, or a prompt-less resolution upscale). */
 export type ActionKind =
   | "remix"
   | "remove-bg"
   | "change-bg"
   | "variations"
   | "edit-area"
-  | "smart-edit";
+  | "smart-edit"
+  | "upscale";
 
 /** Actions that inpaint (a mask + `mode:"inpaint"`) rather than whole-image
  * img2img: the result overlays the source exactly and only the masked region
@@ -32,6 +34,13 @@ export function isInpaintKind(kind: ActionKind): boolean {
 export function inpaintBlockedNote(active: Provider | undefined): string | null {
   if (!active?.available) return "Connect a provider in Settings";
   if (!active.capabilities.inpaint) return `${active.label} can't inpaint — try ComfyUI or OpenAI`;
+  return null;
+}
+
+/** Why upscale is unavailable for `active`, or null when it can upscale. */
+export function upscaleBlockedNote(active: Provider | undefined): string | null {
+  if (!active?.available) return "Connect a provider in Settings";
+  if (!active.capabilities.upscale) return `${active.label} can't upscale — try Fal.ai`;
   return null;
 }
 
@@ -111,5 +120,14 @@ export const ACTIONS: Record<ActionKind, ActionMeta> = {
     // Inpaint with an auto-derived mask; the prompt describes the region fill.
     prompt: (userPrompt) => userPrompt,
     layerName: (sourceName) => `${sourceName} — smart edit`,
+  },
+  upscale: {
+    icon: Maximize2,
+    label: "Upscale",
+    title: ({ sourceName }) => `Upscaling “${sourceName}”…`,
+    canvasLabel: "UPSCALING",
+    // Prompt-less: upscale runs through /api/upscale, not the edit prompt path.
+    prompt: () => "",
+    layerName: (sourceName) => `${sourceName} — upscaled`,
   },
 };

@@ -16,6 +16,7 @@ import type {
   ProgressEvent,
   ProjectDoc,
   ProviderContext,
+  UpscaleRequest,
 } from "@latteart/shared";
 import { applyStyle, stylePreset } from "@latteart/shared";
 import { PROVIDER_CATALOG, catalogEntry } from "./providers/catalog.ts";
@@ -240,6 +241,31 @@ const routes = app
     };
 
     return streamJob(c, providerId, entry, (ctx, signal) => provider.edit!(req, ctx, signal));
+  })
+
+  // Resolution upscale — prompt-less, distinct from /api/edit. Same SSE
+  // contract; only providers that implement `upscale` (Fal, Mock) accept it.
+  .post("/api/upscale", async (c) => {
+    const body = await c.req
+      .json<Partial<UpscaleRequest>>()
+      .catch(() => ({}) as Partial<UpscaleRequest>);
+    const providerId = String(body.providerId ?? "");
+    const entry = catalogEntry(providerId);
+    const provider = getProvider(providerId);
+    const image = typeof body.image === "string" ? body.image : "";
+    // Only 2× / 4× are offered; anything else falls back to 2×.
+    const scale: 2 | 4 = body.scale === 4 ? 4 : 2;
+
+    if (!entry) return c.json({ error: "unknown provider" }, 404);
+    if (!provider) return c.json({ error: `provider '${providerId}' is not available yet` }, 400);
+    if (!provider.upscale)
+      return c.json({ error: `${entry.label} does not support upscaling yet` }, 400);
+    if (!image.startsWith("data:")) return c.json({ error: "a source image is required" }, 400);
+    if (provider.requiresKey && !hasSecret(providerId))
+      return c.json({ error: "missing API key" }, 400);
+
+    const req: UpscaleRequest = { providerId, model: body.model, image, scale };
+    return streamJob(c, providerId, entry, (ctx, signal) => provider.upscale!(req, ctx, signal));
   })
 
   // The LLM enhancement engines and their live availability — the secondary

@@ -90,3 +90,17 @@ export function streamGenerate(params: GenerateParams, handlers: StreamHandlers)
 export function streamEdit(params: EditParams, handlers: StreamHandlers): Promise<void> {
   return postSSE("/api/edit", params, handlers);
 }
+
+export interface UpscaleParams {
+  providerId: string;
+  model?: string;
+  /** Source image as a data: URL. */
+  image: string;
+  /** Output size multiplier (2× or 4×). */
+  scale: 2 | 4;
+}
+
+/** Prompt-less resolution upscale over `POST /api/upscale`. */
+export function streamUpscale(params: UpscaleParams, handlers: StreamHandlers): Promise<void> {
+  return postSSE("/api/upscale", params, handlers);
+}

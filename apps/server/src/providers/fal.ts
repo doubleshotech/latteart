@@ -7,6 +7,7 @@ import type {
   ImageProvider,
   ModelInfo,
   ProviderContext,
+  UpscaleRequest,
 } from "@latteart/shared";
 
 /**
@@ -16,9 +17,10 @@ import type {
  * running → done) forwarded to `ctx.onProgress`, and it can't time out the way
  * a long synchronous request would.
  *
- * v1 covers text-to-image and image-to-image against two FLUX models. Inpaint,
- * transparent-layer (LayerDiffuse) output, and upscaling are separate Fal
- * endpoints for later — the catalog capabilities are scoped to match.
+ * v1 covers text-to-image and image-to-image against two FLUX models, plus a
+ * prompt-less Real-ESRGAN upscale on a separate endpoint. Inpaint and
+ * transparent-layer (LayerDiffuse) output are further Fal endpoints for later —
+ * the catalog capabilities are scoped to match.
  *
  * NOTE: this provider has been verified against Fal's documented queue contract
  * and FLUX schema via fixtures only — it has not yet been smoke-tested against
@@ -26,6 +28,10 @@ import type {
  */
 
 const QUEUE_BASE = "https://queue.fal.run";
+
+/** Real-ESRGAN upscaler endpoint — a single shared model, independent of the
+ * FLUX generation models above. Takes an image + scale, returns a larger image. */
+const UPSCALE_ENDPOINT = "fal-ai/esrgan";
 
 interface FalModel {
   /** The Fal model id, also the queue submit path (e.g. fal-ai/flux/schnell). */
@@ -148,6 +154,8 @@ interface FalImage {
 
 interface FalResult {
   images?: FalImage[];
+  /** ESRGAN (and some single-output endpoints) return one `image`, not `images`. */
+  image?: FalImage;
   seed?: number;
 }
 
@@ -292,7 +300,8 @@ async function toImages(
   fetchImpl: typeof fetch,
   signal?: AbortSignal,
 ): Promise<GeneratedImage[]> {
-  const images = result.images ?? [];
+  // Normalize both shapes: FLUX returns `images[]`, ESRGAN returns a single `image`.
+  const images = result.images ?? (result.image ? [result.image] : []);
   if (images.length === 0) throw new Error("Fal returned no image");
   return Promise.all(
     images.map(async (img) => ({
@@ -318,7 +327,7 @@ export function createFalProvider(opts: FalOptions = {}): ImageProvider {
     label: "Fal.ai",
     kind: "cloud",
     requiresKey: true,
-    capabilities: { ...noCapabilities(), txt2img: true, img2img: true },
+    capabilities: { ...noCapabilities(), txt2img: true, img2img: true, upscale: true },
 
     async listModels(): Promise<ModelInfo[]> {
       return FAL_MODELS.map((m) => ({ id: m.id, label: m.label }));
@@ -372,6 +381,34 @@ export function createFalProvider(opts: FalOptions = {}): ImageProvider {
         provider: "fal",
         model: model.id,
         seed: result.seed ?? req.seed,
+        createdAt: Date.now(),
+      };
+    },
+
+    async upscale(
+      req: UpscaleRequest,
+      ctx: ProviderContext,
+      signal?: AbortSignal,
+    ): Promise<GenResult> {
+      if (!ctx.apiKey)
+        throw new Error("Fal needs an API key — create one at fal.ai/dashboard/keys");
+      if (!req.image.startsWith("data:"))
+        throw new Error("Fal upscale expected a base64 data: URL for the source image");
+      const result = await runQueue(
+        UPSCALE_ENDPOINT,
+        { image_url: req.image, scale: req.scale, sync_mode: true },
+        ctx.apiKey,
+        ctx,
+        signal,
+        fetchImpl,
+        pollIntervalMs,
+      );
+      return {
+        id: crypto.randomUUID(),
+        // ESRGAN echoes the output dims on the image itself; toImages reads them.
+        images: await toImages(result, 0, 0, fetchImpl, signal),
+        provider: "fal",
+        model: UPSCALE_ENDPOINT,
         createdAt: Date.now(),
       };
     },
