@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Eraser, SquareDashed, Undo2, Wand2, X } from "lucide-react";
 import { rewriteInpaintInstruction } from "../api/inpaintPrompt";
+import { inpaintBlockedNote } from "../lib/actions";
 import type { Layer } from "../stores/documentStore";
 import { useDocument } from "../stores/documentStore";
 import { useGeneration } from "../stores/generationStore";
@@ -268,11 +269,7 @@ function Editor({ source }: { source: Layer }) {
     closeMaskEdit();
   };
 
-  const blockedNote = !active?.available
-    ? "Connect a provider in Settings"
-    : !active.capabilities.inpaint
-      ? `${active.label} can't inpaint — try ComfyUI`
-      : null;
+  const blockedNote = inpaintBlockedNote(active);
 
   return (
     <div

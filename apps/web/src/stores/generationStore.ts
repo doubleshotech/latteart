@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { ProgressEvent } from "@latteart/shared";
-import { ACTIONS, type ActionKind } from "../lib/actions";
+import { ACTIONS, isInpaintKind, type ActionKind } from "../lib/actions";
 import { streamEdit, streamGenerate } from "../api/generate";
 import { flattenLayers } from "../lib/flatten";
 import { keyFlatBackground } from "../lib/keyFlatBackground";
@@ -479,15 +479,15 @@ export const useGeneration = create<GenerationState>((set, get) => {
 
         // The result lands as a new layer offset above the source (screen 5).
         // Create it first so the action can anchor its progress UI on it.
-        const editArea = kind === "edit-area";
+        const inpaint = isInpaintKind(kind);
         const layerId = doc.addLayer(
           {
             name: ACTIONS[kind].layerName(live.name, i, jobs),
-            // Edit-area (inpaint) returns a full image whose unedited regions
-            // must line up with the source, so overlay it exactly in place;
-            // other actions offset the result above the source.
-            x: live.x + (editArea ? 0 : 46 + i * 22),
-            y: live.y + (editArea ? 0 : -36 + i * 22),
+            // Inpaint (edit-area / smart-edit) returns a full image whose
+            // unedited regions must line up with the source, so overlay it
+            // exactly in place; other actions offset the result above the source.
+            x: live.x + (inpaint ? 0 : 46 + i * 22),
+            y: live.y + (inpaint ? 0 : -36 + i * 22),
             width: live.width,
             height: live.height,
             src: null,
@@ -531,9 +531,9 @@ export const useGeneration = create<GenerationState>((set, get) => {
                     prompt: editPrompt,
                     styleId: kind === "remix" ? styleId : undefined,
                     image,
-                    mode: kind === "edit-area" ? "inpaint" : "img2img",
+                    mode: inpaint ? "inpaint" : "img2img",
                     // Mask rides along only for inpaint; matches the source's pixels.
-                    mask: kind === "edit-area" ? mask : undefined,
+                    mask: inpaint ? mask : undefined,
                     strength,
                     width: rw,
                     height: rh,
