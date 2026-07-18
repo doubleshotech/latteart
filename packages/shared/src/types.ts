@@ -69,6 +69,20 @@ export interface EditRequest {
   seed?: number;
 }
 
+/**
+ * A pure resolution upscale of an existing image — deliberately separate from
+ * {@link EditRequest}: it takes no prompt, no mask, and no style, only a source
+ * image and an output multiplier. Gated by the `upscale` capability.
+ */
+export interface UpscaleRequest {
+  providerId: string;
+  model?: string;
+  /** Source image as a data: URL. */
+  image: string;
+  /** Output size multiplier (2× or 4×). */
+  scale: 2 | 4;
+}
+
 export interface GeneratedImage {
   /** Image payload as a data: URL so it drops straight onto the canvas. */
   dataUrl: string;
@@ -138,6 +152,12 @@ export interface ImageProvider {
   listModels(): Promise<ModelInfo[]>;
   generate(req: GenerateRequest, ctx: ProviderContext, signal?: AbortSignal): Promise<GenResult>;
   edit?(req: EditRequest, ctx: ProviderContext, signal?: AbortSignal): Promise<GenResult>;
+  /**
+   * Optional resolution upscale (e.g. Real-ESRGAN). Prompt-less and distinct
+   * from {@link edit}; gated by the `upscale` capability so the UI only offers
+   * it where a provider can actually run it.
+   */
+  upscale?(req: UpscaleRequest, ctx: ProviderContext, signal?: AbortSignal): Promise<GenResult>;
 }
 
 /**

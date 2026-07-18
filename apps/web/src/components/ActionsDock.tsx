@@ -4,12 +4,13 @@ import {
   Eraser,
   Image as ImageIcon,
   LayoutGrid,
+  Maximize2,
   Repeat2,
   SquareDashed,
   Wand2,
   X,
 } from "lucide-react";
-import { inpaintBlockedNote } from "../lib/actions";
+import { inpaintBlockedNote, upscaleBlockedNote } from "../lib/actions";
 import { useDocument, type Layer } from "../stores/documentStore";
 import { useGeneration } from "../stores/generationStore";
 import { useProviders } from "../stores/providersStore";
@@ -145,6 +146,10 @@ export function ActionsDock({ layer }: { layer: Layer }) {
   const canInpaint = !!active?.available && !!active.capabilities.inpaint;
   const noInpaint = !!active?.available && !active.capabilities.inpaint;
   const inpaintTitle = inpaintBlockedNote(active) ?? undefined;
+  // Upscale gates on its own capability (Fal / Mock today), like inpaint does.
+  const canUpscale = !!active?.available && !!active.capabilities.upscale;
+  const noUpscale = !!active?.available && !active.capabilities.upscale;
+  const upscaleTitle = upscaleBlockedNote(active) ?? undefined;
   const editBlockedTitle = !active?.available
     ? "Connect a provider with a key in Settings"
     : !active.capabilities.img2img
@@ -169,6 +174,15 @@ export function ActionsDock({ layer }: { layer: Layer }) {
       return;
     }
     if (canInpaint) fn();
+  };
+
+  /** Same routing for Upscale, which gates on the upscale capability. */
+  const upscaleGuard = (fn: () => void) => () => {
+    if (!active?.available) {
+      openSettings();
+      return;
+    }
+    if (canUpscale) fn();
   };
 
   const duplicate = () => {
@@ -320,6 +334,18 @@ export function ActionsDock({ layer }: { layer: Layer }) {
           disabled={noImg2img}
           onClick={guard(() => openAction("variations", layer.id))}
         />
+        {/* Upscale — prompt-less resolution boost; needs an upscale-capable
+            provider (Fal / Mock). Drill-in picks the ×2 / ×4 factor. */}
+        <div title={upscaleTitle}>
+          <ActionRow
+            icon={<Maximize2 size={15} strokeWidth={1.7} />}
+            label="Upscale"
+            tag="2× / 4×"
+            drillIn
+            disabled={noUpscale}
+            onClick={upscaleGuard(() => openAction("upscale", layer.id))}
+          />
+        </div>
         {/* Edit area — inpaint; needs a mask-capable provider. Enabled when no
             provider is connected so it can route to Settings like its siblings;
             disabled only when a connected provider can't inpaint. */}

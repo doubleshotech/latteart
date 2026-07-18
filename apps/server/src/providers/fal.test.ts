@@ -4,7 +4,12 @@
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/unbound-method */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import type { EditRequest, GenerateRequest, ProviderContext } from "@latteart/shared";
+import type {
+  EditRequest,
+  GenerateRequest,
+  ProviderContext,
+  UpscaleRequest,
+} from "@latteart/shared";
 import { createFalProvider } from "./fal.ts";
 
 /**
@@ -97,6 +102,13 @@ const editReq = (over: Partial<EditRequest> = {}): EditRequest => ({
   prompt: "make it blue",
   image: "data:image/png;base64,SRC",
   mode: "img2img",
+  ...over,
+});
+
+const upscaleReq = (over: Partial<UpscaleRequest> = {}): UpscaleRequest => ({
+  providerId: "fal",
+  image: "data:image/png;base64,SRC",
+  scale: 2,
   ...over,
 });
 
@@ -206,6 +218,57 @@ describe("fal provider — img2img", () => {
     await fal.edit!(editReq({ model: "fal-ai/flux/schnell", strength: 0.5 }), ctxWith());
 
     assert.equal(calls[0]!.url, "https://queue.fal.run/fal-ai/flux/dev/image-to-image");
+  });
+});
+
+describe("fal provider — upscale", () => {
+  it("submits to the ESRGAN endpoint with image_url + scale and maps the singular `image` shape", async () => {
+    const { fetchImpl, calls } = falStub({
+      statuses: [{ status: "COMPLETED" }],
+      // ESRGAN returns one `image`, not an `images[]` array — exercises the
+      // normalization in toImages().
+      result: { image: { url: "data:image/png;base64,BIG", width: 1024, height: 768 } },
+    });
+    const fal = createFalProvider({ fetchImpl, pollIntervalMs: 0 });
+    assert.ok(fal.upscale, "provider should implement upscale()");
+
+    const result = await fal.upscale!(upscaleReq({ scale: 4 }), ctxWith());
+
+    const submit = calls[0]!;
+    assert.equal(submit.url, "https://queue.fal.run/fal-ai/esrgan");
+    const body = submit.body as Record<string, unknown>;
+    assert.equal(body.image_url, "data:image/png;base64,SRC");
+    assert.equal(body.scale, 4);
+    // Upscale is prompt-less — no prompt/strength ride along.
+    assert.equal("prompt" in body, false);
+    assert.equal("strength" in body, false);
+
+    assert.equal(result.images.length, 1);
+    assert.equal(result.images[0]!.dataUrl, "data:image/png;base64,BIG");
+    assert.equal(result.provider, "fal");
+  });
+
+  it("forwards the ×2 factor unchanged (both scales the endpoint accepts)", async () => {
+    const { fetchImpl, calls } = falStub({
+      statuses: [{ status: "COMPLETED" }],
+      result: { image: { url: "data:image/png;base64,BIG" } },
+    });
+    const fal = createFalProvider({ fetchImpl, pollIntervalMs: 0 });
+
+    await fal.upscale!(upscaleReq({ scale: 2 }), ctxWith());
+
+    // Provider passes `scale` straight through, so ×2 must not collapse to ×4
+    // (or vice-versa) — guards the factor promised to the UI's ×2/×4 control.
+    assert.equal((calls[0]!.body as Record<string, unknown>).scale, 2);
+  });
+
+  it("rejects an upscale source that isn't a data: URL", async () => {
+    const { fetchImpl } = falStub({ statuses: [], result: {} });
+    const fal = createFalProvider({ fetchImpl, pollIntervalMs: 0 });
+    await assert.rejects(
+      () => fal.upscale!(upscaleReq({ image: "https://example.com/x.png" }), ctxWith()),
+      /data: URL/,
+    );
   });
 });
 

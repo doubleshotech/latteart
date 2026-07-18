@@ -47,6 +47,7 @@ export function ActionDrillIn({ view, source }: { view: ActionView; source: Laye
   const [simIndex, setSimIndex] = useState(1); // "Quite similar"
   const [styleId, setStyleId] = useState(sessionStyleId);
   const [count, setCount] = useState(2);
+  const [scale, setScale] = useState<2 | 4>(2);
   const [focused, setFocused] = useState(false);
 
   const active = providers.find((p) => p.id === providerId);
@@ -54,18 +55,21 @@ export function ActionDrillIn({ view, source }: { view: ActionView; source: Laye
   const Icon = meta.icon;
   const stop = SIMILARITY_STOPS[simIndex] ?? SIMILARITY_STOPS[1];
 
+  const isUpscale = view.kind === "upscale";
   const needsPrompt = view.kind === "remix" || view.kind === "change-bg";
+  // Upscale gates on its own capability; every other drill-in is img2img.
+  const capOk = isUpscale ? !!active?.capabilities.upscale : !!active?.capabilities.img2img;
   // Not gated on a running job — submitting mid-run queues the action.
-  const canGenerate =
-    !!active?.available && active.capabilities.img2img && (!needsPrompt || !!prompt.trim());
+  const canGenerate = !!active?.available && capOk && (!needsPrompt || !!prompt.trim());
 
   const activeStyle = STYLE_PRESETS.find((s) => s.id === styleId) ?? STYLE_PRESETS[0]!;
   const jobs = view.kind === "variations" ? count : 1;
 
   const generate = () => {
     if (!canGenerate || !active) return;
-    const detail =
-      view.kind === "remix"
+    const detail = isUpscale
+      ? `upscale ×${scale} · ${active.label}`
+      : view.kind === "remix"
         ? `img2img · ${active.label} · ${stop.label.toLowerCase()}`
         : `img2img · ${active.label}`;
     runAction({
@@ -76,6 +80,7 @@ export function ActionDrillIn({ view, source }: { view: ActionView; source: Laye
       prompt: needsPrompt ? prompt : undefined,
       styleId: view.kind === "remix" ? styleId : undefined,
       strength: view.kind === "remix" ? stop.strength : undefined,
+      scale: isUpscale ? scale : undefined,
       detail,
       count: jobs,
     });
@@ -85,8 +90,9 @@ export function ActionDrillIn({ view, source }: { view: ActionView; source: Laye
     closeAction();
   };
 
-  const generateLabel =
-    view.kind === "remix"
+  const generateLabel = isUpscale
+    ? `Upscale ×${scale}`
+    : view.kind === "remix"
       ? "Generate remix"
       : view.kind === "change-bg"
         ? "Generate background"
@@ -430,6 +436,45 @@ export function ActionDrillIn({ view, source }: { view: ActionView; source: Laye
                   {n}
                 </button>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* upscale: factor */}
+        {isUpscale && (
+          <div>
+            <div style={{ ...fieldLabel, marginBottom: 7 }}>Factor</div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {([2, 4] as const).map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setScale(n)}
+                  style={{
+                    flex: 1,
+                    height: 34,
+                    borderRadius: 8,
+                    background:
+                      n === scale
+                        ? "color-mix(in srgb, var(--accent) 16%, transparent)"
+                        : "var(--surface-2)",
+                    border:
+                      n === scale
+                        ? "1px solid color-mix(in srgb, var(--accent) 45%, transparent)"
+                        : "1px solid var(--border)",
+                    color: n === scale ? "var(--accent)" : "var(--text-muted)",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    fontFamily: "var(--font-mono)",
+                    cursor: "pointer",
+                  }}
+                >
+                  ×{n}
+                </button>
+              ))}
+            </div>
+            <div style={{ ...monoFaint, marginTop: 8 }}>
+              {scale}× the resolution — same size on canvas, sharper when zoomed or exported
             </div>
           </div>
         )}

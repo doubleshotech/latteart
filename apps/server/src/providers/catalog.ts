@@ -35,10 +35,10 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     kind: "cloud",
     blurb: "FLUX.1 [dev] · [schnell] · fast cloud",
     requiresKey: true,
-    // v1 drives txt2img + img2img (FLUX). Inpaint, transparent-layer output, and
-    // upscale are separate Fal endpoints for later — capabilities gate the UI,
-    // so only claim what the provider actually implements.
-    capabilities: caps({ txt2img: true, img2img: true }),
+    // v1 drives txt2img + img2img (FLUX) and a Real-ESRGAN upscale. Inpaint and
+    // transparent-layer output are separate Fal endpoints for later —
+    // capabilities gate the UI, so only claim what the provider implements.
+    capabilities: caps({ txt2img: true, img2img: true, upscale: true }),
     // schnell first: the UI defaults a provider to models[0], and schnell is
     // the fast/cheap default we want for exploration (dev is the quality option).
     models: [
@@ -99,8 +99,9 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     kind: "local",
     blurb: "Offline placeholder generator · no key needed",
     requiresKey: false,
-    // Inpaint composites through the mask (SVG), so Edit area works offline.
-    capabilities: caps({ txt2img: true, img2img: true, inpaint: true }),
+    // Inpaint composites through the mask (SVG), so Edit area works offline;
+    // upscale echoes the source, so the Upscale action runs offline too.
+    capabilities: caps({ txt2img: true, img2img: true, inpaint: true, upscale: true }),
     models: [{ id: "mock-diffusion", label: "Mock Diffusion" }],
     implemented: true,
   },
