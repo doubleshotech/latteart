@@ -42,15 +42,27 @@ function throwIfAborted(signal?: AbortSignal) {
   if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
 }
 
+/** A single-channel foreground probability map at the source's native pixel
+ * resolution: `data[i]` is 0 (background) … 255 (foreground). The raw material
+ * both the transparent cut-out and the auto-mask (lib/autoMask) derive from. */
+export interface Matte {
+  data: Uint8ClampedArray;
+  width: number;
+  height: number;
+}
+
 /**
- * Segment the foreground with an in-browser matting model and return the image
- * as a transparent PNG. Works on any background — the robust alternative to
- * flat-color keying. The model downloads once (browser-cached), so the first
- * call is slow and later calls are fast. The WASM steps can't be interrupted
- * mid-flight, so `signal` is checked between them: a cancel discards the result
- * (throws AbortError) rather than applying a cut-out the user cancelled.
+ * Run RMBG-1.4 over a source image and return its foreground matte at native
+ * resolution. The model downloads once (browser-cached), so the first call is
+ * slow and later calls are fast. The WASM steps can't be interrupted mid-flight,
+ * so `signal` is checked between them: a cancel throws AbortError before any
+ * result is applied. Also returns the decoded RGBA source so callers can
+ * composite without re-decoding.
  */
-export async function removeBackgroundAI(dataUrl: string, signal?: AbortSignal): Promise<string> {
+async function segment(
+  dataUrl: string,
+  signal?: AbortSignal,
+): Promise<{ rgba: Uint8ClampedArray; matte: Matte }> {
   const { model, processor, RawImage } = await getSession();
   throwIfAborted(signal);
 
@@ -69,17 +81,41 @@ export async function removeBackgroundAI(dataUrl: string, signal?: AbortSignal):
     image.height,
   );
 
-  const rgba = image.rgba();
-  const pixels = new Uint8ClampedArray(rgba.data);
-  for (let i = 0; i < mask.data.length; i++) {
-    pixels[i * 4 + 3] = mask.data[i]!;
+  // Copy the matte out of the RawImage buffer so it stays valid for the caller.
+  return {
+    rgba: new Uint8ClampedArray(image.rgba().data),
+    matte: { data: new Uint8ClampedArray(mask.data), width: image.width, height: image.height },
+  };
+}
+
+/**
+ * Segment the foreground with an in-browser matting model and return the image
+ * as a transparent PNG. Works on any background — the robust alternative to
+ * flat-color keying. See `segment` for the model/cancel semantics.
+ */
+export async function removeBackgroundAI(dataUrl: string, signal?: AbortSignal): Promise<string> {
+  const { rgba, matte } = await segment(dataUrl, signal);
+
+  const pixels = new Uint8ClampedArray(rgba);
+  for (let i = 0; i < matte.data.length; i++) {
+    pixels[i * 4 + 3] = matte.data[i]!;
   }
 
   const canvas = document.createElement("canvas");
-  canvas.width = image.width;
-  canvas.height = image.height;
+  canvas.width = matte.width;
+  canvas.height = matte.height;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("no 2d context for background removal");
-  ctx.putImageData(new ImageData(pixels, image.width, image.height), 0, 0);
+  ctx.putImageData(new ImageData(pixels, matte.width, matte.height), 0, 0);
   return canvas.toDataURL("image/png");
+}
+
+/**
+ * The foreground matte alone — the same segmentation the cut-out uses, but
+ * returning the raw probability map instead of compositing it into alpha.
+ * Feeds lib/autoMask, which turns it into a white-on-black inpaint mask.
+ */
+export async function foregroundMatte(dataUrl: string, signal?: AbortSignal): Promise<Matte> {
+  const { matte } = await segment(dataUrl, signal);
+  return matte;
 }

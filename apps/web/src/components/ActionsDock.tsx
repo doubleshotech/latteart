@@ -6,8 +6,10 @@ import {
   LayoutGrid,
   Repeat2,
   SquareDashed,
+  Wand2,
   X,
 } from "lucide-react";
+import { inpaintBlockedNote } from "../lib/actions";
 import { useDocument, type Layer } from "../stores/documentStore";
 import { useGeneration } from "../stores/generationStore";
 import { useProviders } from "../stores/providersStore";
@@ -142,11 +144,7 @@ export function ActionsDock({ layer }: { layer: Layer }) {
   // from img2img, so it must NOT be gated on canEdit/guard() below.
   const canInpaint = !!active?.available && !!active.capabilities.inpaint;
   const noInpaint = !!active?.available && !active.capabilities.inpaint;
-  const inpaintTitle = !active?.available
-    ? "Connect a provider in Settings"
-    : !active.capabilities.inpaint
-      ? `${active.label} can't inpaint — try ComfyUI`
-      : undefined;
+  const inpaintTitle = inpaintBlockedNote(active) ?? undefined;
   const editBlockedTitle = !active?.available
     ? "Connect a provider with a key in Settings"
     : !active.capabilities.img2img
@@ -161,6 +159,16 @@ export function ActionsDock({ layer }: { layer: Layer }) {
     }
     if (!canEdit) return;
     fn();
+  };
+
+  /** Same routing for the inpaint actions (Edit area, Smart edit), which gate on
+   * the inpaint capability rather than img2img. */
+  const inpaintGuard = (fn: () => void) => () => {
+    if (!active?.available) {
+      openSettings();
+      return;
+    }
+    if (canInpaint) fn();
   };
 
   const duplicate = () => {
@@ -292,6 +300,19 @@ export function ActionsDock({ layer }: { layer: Layer }) {
           disabled={noImg2img}
           onClick={guard(() => openAction("change-bg", layer.id))}
         />
+        {/* Smart edit — auto-masked inpaint (no painting): the mask is derived
+            from the RMBG matte, so it needs an inpaint-capable provider like
+            Edit area, not just img2img. */}
+        <div title={inpaintTitle}>
+          <ActionRow
+            icon={<Wand2 size={15} strokeWidth={1.7} />}
+            label="Smart edit"
+            tag="auto-mask"
+            drillIn
+            disabled={noInpaint}
+            onClick={inpaintGuard(() => openAction("smart-edit", layer.id))}
+          />
+        </div>
         <ActionRow
           icon={<LayoutGrid size={15} strokeWidth={1.7} />}
           label="Variations"
@@ -309,13 +330,7 @@ export function ActionsDock({ layer }: { layer: Layer }) {
             tag="inpaint"
             drillIn
             disabled={noInpaint}
-            onClick={() => {
-              if (!active?.available) {
-                openSettings();
-                return;
-              }
-              if (canInpaint) openMaskEdit(layer.id);
-            }}
+            onClick={inpaintGuard(() => openMaskEdit(layer.id))}
           />
         </div>
       </div>

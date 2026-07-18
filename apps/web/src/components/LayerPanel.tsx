@@ -7,6 +7,7 @@ import { useGeneration } from "../stores/generationStore";
 import { useSession } from "../stores/sessionStore";
 import { ActionDrillIn } from "./ActionDrillIn";
 import { ActionsDock } from "./ActionsDock";
+import { SmartEditPanel } from "./SmartEditPanel";
 
 function Thumb({ layer }: { layer: Layer }) {
   const base: React.CSSProperties = {
@@ -326,7 +327,11 @@ export function LayerPanel() {
   if (actionView && drillSource) {
     return (
       <aside style={aside}>
-        <ActionDrillIn view={actionView} source={drillSource} />
+        {actionView.kind === "smart-edit" ? (
+          <SmartEditPanel source={drillSource} />
+        ) : (
+          <ActionDrillIn view={actionView} source={drillSource} />
+        )}
       </aside>
     );
   }

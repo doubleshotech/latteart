@@ -4,12 +4,36 @@ import {
   LayoutGrid,
   Repeat2,
   SquareDashed,
+  Wand2,
   type LucideIcon,
 } from "lucide-react";
+import type { Provider } from "../api/client";
 
 /** Editor actions that run against a single source layer (img2img, or inpaint
- * for edit-area). */
-export type ActionKind = "remix" | "remove-bg" | "change-bg" | "variations" | "edit-area";
+ * for edit-area / smart-edit). */
+export type ActionKind =
+  | "remix"
+  | "remove-bg"
+  | "change-bg"
+  | "variations"
+  | "edit-area"
+  | "smart-edit";
+
+/** Actions that inpaint (a mask + `mode:"inpaint"`) rather than whole-image
+ * img2img: the result overlays the source exactly and only the masked region
+ * regenerates. `edit-area` paints its mask; `smart-edit` derives it from the
+ * RMBG matte. */
+export function isInpaintKind(kind: ActionKind): boolean {
+  return kind === "edit-area" || kind === "smart-edit";
+}
+
+/** Why inpaint is unavailable for `active`, or null when it can inpaint. Shared
+ * by every inpaint entry point (Edit area, Smart edit) so the copy lives once. */
+export function inpaintBlockedNote(active: Provider | undefined): string | null {
+  if (!active?.available) return "Connect a provider in Settings";
+  if (!active.capabilities.inpaint) return `${active.label} can't inpaint — try ComfyUI or OpenAI`;
+  return null;
+}
 
 /** Single source of truth for per-action copy, icons, and prompt composition. */
 export interface ActionMeta {
@@ -78,5 +102,14 @@ export const ACTIONS: Record<ActionKind, ActionMeta> = {
     // Inpaint: the composed prompt describes what fills the masked region.
     prompt: (userPrompt) => userPrompt,
     layerName: (sourceName) => `${sourceName} — edited area`,
+  },
+  "smart-edit": {
+    icon: Wand2,
+    label: "Smart edit",
+    title: ({ sourceName }) => `Smart-editing “${sourceName}”…`,
+    canvasLabel: "SMART EDIT",
+    // Inpaint with an auto-derived mask; the prompt describes the region fill.
+    prompt: (userPrompt) => userPrompt,
+    layerName: (sourceName) => `${sourceName} — smart edit`,
   },
 };
