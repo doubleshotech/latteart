@@ -2,6 +2,7 @@ import {
   Copy,
   Download,
   Eraser,
+  Expand,
   Image as ImageIcon,
   LayoutGrid,
   Maximize2,
@@ -10,7 +11,7 @@ import {
   Wand2,
   X,
 } from "lucide-react";
-import { inpaintBlockedNote, upscaleBlockedNote } from "../lib/actions";
+import { inpaintBlockedNote, outpaintBlockedNote, upscaleBlockedNote } from "../lib/actions";
 import { useDocument, type Layer } from "../stores/documentStore";
 import { useGeneration } from "../stores/generationStore";
 import { useProviders } from "../stores/providersStore";
@@ -150,6 +151,10 @@ export function ActionsDock({ layer }: { layer: Layer }) {
   const canUpscale = !!active?.available && !!active.capabilities.upscale;
   const noUpscale = !!active?.available && !active.capabilities.upscale;
   const upscaleTitle = upscaleBlockedNote(active) ?? undefined;
+  // Outpaint (Expand) gates on its own capability (OpenAI / Mock today).
+  const canOutpaint = !!active?.available && !!active.capabilities.outpaint;
+  const noOutpaint = !!active?.available && !active.capabilities.outpaint;
+  const outpaintTitle = outpaintBlockedNote(active) ?? undefined;
   const editBlockedTitle = !active?.available
     ? "Connect a provider with a key in Settings"
     : !active.capabilities.img2img
@@ -183,6 +188,15 @@ export function ActionsDock({ layer }: { layer: Layer }) {
       return;
     }
     if (canUpscale) fn();
+  };
+
+  /** Same routing for Outpaint (Expand), which gates on the outpaint capability. */
+  const outpaintGuard = (fn: () => void) => () => {
+    if (!active?.available) {
+      openSettings();
+      return;
+    }
+    if (canOutpaint) fn();
   };
 
   const duplicate = () => {
@@ -344,6 +358,19 @@ export function ActionsDock({ layer }: { layer: Layer }) {
             drillIn
             disabled={noUpscale}
             onClick={upscaleGuard(() => openAction("upscale", layer.id))}
+          />
+        </div>
+        {/* Outpaint — expand the canvas and fill the new border via a masked
+            edit; needs an outpaint-capable provider (OpenAI / Mock). Drill-in
+            picks the direction + amount + an optional prompt. */}
+        <div title={outpaintTitle}>
+          <ActionRow
+            icon={<Expand size={15} strokeWidth={1.7} />}
+            label="Outpaint"
+            tag="expand"
+            drillIn
+            disabled={noOutpaint}
+            onClick={outpaintGuard(() => openAction("outpaint", layer.id))}
           />
         </div>
         {/* Edit area — inpaint; needs a mask-capable provider. Enabled when no

@@ -168,6 +168,32 @@ describe("openai provider — inpaint", () => {
   });
 });
 
+describe("openai provider — outpaint", () => {
+  it("attaches a mask for mode 'outpaint' and forces no size (keeps the expanded canvas)", async () => {
+    const { fetchImpl, calls } = openaiStub({ data: [{ b64_json: "OUT" }] });
+    const openai = createOpenAIProvider({ fetchImpl });
+    // 2x2: everything white (fill the whole border) except a preserved corner.
+    const mask = whiteOnBlackMask([
+      [0, 1],
+      [1, 1],
+    ]);
+
+    await openai.edit!(editReq({ mode: "outpaint", mask }), ctxWith());
+
+    const form = calls[0]!.body as FormData;
+    const maskPart = form.get("mask");
+    assert.ok(maskPart instanceof Blob, "outpaint should attach a mask part");
+    // Same masked-edit endpoint as inpaint; the source is the pre-expanded canvas
+    // so no forced size (that would resample and break the expansion alignment).
+    assert.equal(form.get("size"), null, "outpaint should not force a size");
+    const out = PNG.sync.read(Buffer.from(await (maskPart as Blob).arrayBuffer()));
+    const alphaAt = (x: number, y: number) => out.data[(out.width * y + x) * 4 + 3];
+    // white → alpha 0 (fill here); black → alpha 255 (preserve).
+    assert.equal(alphaAt(0, 0), 255);
+    assert.equal(alphaAt(1, 0), 0);
+  });
+});
+
 describe("openai provider — size mapping", () => {
   it("snaps requested dimensions to the nearest OpenAI size", async () => {
     const sizes: unknown[] = [];

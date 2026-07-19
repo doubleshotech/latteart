@@ -127,7 +127,13 @@ export function createOpenAIProvider(opts: OpenAIOptions = {}): ImageProvider {
     label: "OpenAI",
     kind: "cloud",
     requiresKey: true,
-    capabilities: { ...noCapabilities(), txt2img: true, img2img: true, inpaint: true },
+    capabilities: {
+      ...noCapabilities(),
+      txt2img: true,
+      img2img: true,
+      inpaint: true,
+      outpaint: true,
+    },
 
     async listModels(): Promise<ModelInfo[]> {
       return [{ id: "gpt-image-1", label: "GPT Image 1" }];
@@ -185,16 +191,29 @@ export function createOpenAIProvider(opts: OpenAIOptions = {}): ImageProvider {
       // "unmasked region stays put", so we let OpenAI default to "auto" (which
       // keeps a standard-sized source at its dimensions). Gemini's edit path
       // omits size for the same reason. TODO(live-smoke): confirm how "auto"
-      // treats a non-standard source size.
+      // treats a non-standard source size — matters most for outpaint, whose
+      // expanded canvas (source + padding) is usually not one of gpt-image-1's
+      // three sizes; if "auto" resamples it, the preserved original would shift
+      // out of alignment with the layer's on-canvas box. The offline mock is
+      // unaffected (it honors any size), so outpaint verifies end-to-end there.
       form.append(
         "image",
-        new Blob([source.bytes], { type: source.mime }),
+        // Wrap in a plain Uint8Array: a Node Buffer's type is Buffer<ArrayBufferLike>,
+        // which the DOM lib's BlobPart (backed by a strict ArrayBuffer) rejects.
+        new Blob([new Uint8Array(source.bytes)], { type: source.mime }),
         `image.${extFor(source.mime)}`,
       );
-      // Masked inpaint: only the painted region is regenerated. Without a mask,
+      // Masked edit: only the transparent-in-the-mask region is regenerated.
+      // Inpaint marks a painted region; outpaint marks the transparent padding
+      // around a source placed on an expanded canvas — the same masked-fill call
+      // to gpt-image-1, so both extend the image coherently. Without a mask,
       // gpt-image-1 edits the whole image (img2img).
-      if (req.mode === "inpaint" && req.mask) {
-        form.append("mask", new Blob([toOpenAIMask(req.mask)], { type: "image/png" }), "mask.png");
+      if ((req.mode === "inpaint" || req.mode === "outpaint") && req.mask) {
+        form.append(
+          "mask",
+          new Blob([new Uint8Array(toOpenAIMask(req.mask))], { type: "image/png" }),
+          "mask.png",
+        );
       }
 
       ctx.onProgress?.(15);

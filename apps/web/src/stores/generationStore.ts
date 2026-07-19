@@ -1,6 +1,7 @@
 import { create } from "zustand";
-import type { ProgressEvent } from "@latteart/shared";
+import type { EditMode, ProgressEvent } from "@latteart/shared";
 import { ACTIONS, isInpaintKind, type ActionKind } from "../lib/actions";
+import type { OutpaintAssets } from "../lib/outpaint";
 import { streamEdit, streamGenerate, streamUpscale } from "../api/generate";
 import { flattenLayers } from "../lib/flatten";
 import { keyFlatBackground } from "../lib/keyFlatBackground";
@@ -126,6 +127,13 @@ interface RunActionOpts {
   /** Toast subline, e.g. "img2img · Gemini · quite similar". */
   detail?: string;
   count?: number;
+  /**
+   * Outpaint (Expand) only — the drill-in builds these client-side (padded
+   * source, edge mask, expanded size, and the result layer's box). One shared
+   * type with the producer so the compiler forces every field through — notably
+   * `mask`, whose absence would silently degrade outpaint to a whole-image edit.
+   */
+  outpaint?: OutpaintAssets;
 }
 
 interface GenerationState {
@@ -448,6 +456,7 @@ export const useGeneration = create<GenerationState>((set, get) => {
     mask,
     detail,
     count = 1,
+    outpaint,
   }: RunActionOpts) => {
     const doc = useDocument.getState();
     const source = doc.layers.find((l) => l.id === sourceId);
@@ -456,12 +465,19 @@ export const useGeneration = create<GenerationState>((set, get) => {
       return;
     }
 
+    const isOutpaint = kind === "outpaint";
+    if (isOutpaint && !outpaint) {
+      set({ error: "Couldn't prepare the canvas to expand." });
+      return;
+    }
+
     const userPrompt = prompt?.trim() ?? "";
     // The style override rides along as styleId; the /api/edit route composes
     // it into the prompt server-side (same as /api/generate), so send raw.
     const editPrompt = ACTIONS[kind].prompt(userPrompt);
-    // Content never mutates, so the img2img payload stays the original source.
-    const image = source.src;
+    // Content never mutates, so the img2img payload stays the original source —
+    // except outpaint, which sends the source padded onto the expanded canvas.
+    const image = isOutpaint ? outpaint!.image : source.src;
 
     const prevSelectedId = doc.selectedId;
     // One controller for the whole action so cancel stops the remaining jobs.
@@ -488,11 +504,13 @@ export const useGeneration = create<GenerationState>((set, get) => {
             name: ACTIONS[kind].layerName(live.name, i, jobs),
             // Inpaint (edit-area / smart-edit) returns a full image whose
             // unedited regions must line up with the source, so overlay it
-            // exactly in place; other actions offset the result above the source.
-            x: live.x + (inpaint ? 0 : 46 + i * 22),
-            y: live.y + (inpaint ? 0 : -36 + i * 22),
-            width: live.width,
-            height: live.height,
+            // exactly in place; outpaint returns the larger expanded canvas, so
+            // cover its precomputed box (the original stays put inside it);
+            // other actions offset the result above the source.
+            x: isOutpaint ? outpaint!.placement.x : live.x + (inpaint ? 0 : 46 + i * 22),
+            y: isOutpaint ? outpaint!.placement.y : live.y + (inpaint ? 0 : -36 + i * 22),
+            width: isOutpaint ? outpaint!.placement.width : live.width,
+            height: isOutpaint ? outpaint!.placement.height : live.height,
             src: null,
             status: "generating",
             progress: 0,
@@ -516,8 +534,17 @@ export const useGeneration = create<GenerationState>((set, get) => {
           },
         });
 
-        // Layer dims are display size (~320); scale up to generation pixels.
-        const { rw, rh } = requestSize(live.width, live.height);
+        // Layer dims are display size (~320); scale up to generation pixels —
+        // except outpaint, which already sized its expanded canvas.
+        const { rw, rh } = isOutpaint
+          ? { rw: outpaint!.genWidth, rh: outpaint!.genHeight }
+          : requestSize(live.width, live.height);
+
+        // Inpaint and outpaint both send a mask through the edit endpoint;
+        // outpaint's mask marks the new border (built with the expanded image, so
+        // it rides inside `outpaint`), inpaint's the painted region (top-level).
+        const editMode: EditMode = isOutpaint ? "outpaint" : inpaint ? "inpaint" : "img2img";
+        const editMask = isOutpaint ? outpaint!.mask : inpaint ? mask : undefined;
 
         const outcome = await runStream(
           layerId,
@@ -541,9 +568,9 @@ export const useGeneration = create<GenerationState>((set, get) => {
                       prompt: editPrompt,
                       styleId: kind === "remix" ? styleId : undefined,
                       image,
-                      mode: inpaint ? "inpaint" : "img2img",
-                      // Mask rides along only for inpaint; matches the source's pixels.
-                      mask: inpaint ? mask : undefined,
+                      mode: editMode,
+                      // Mask rides along for inpaint/outpaint; matches `image`'s pixels.
+                      mask: editMask,
                       strength,
                       width: rw,
                       height: rh,
