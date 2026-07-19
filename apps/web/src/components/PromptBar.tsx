@@ -1,6 +1,17 @@
 import { useRef, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ChevronDown, Layers, Palette, Scissors, Sparkles, Undo2, Wand2, X } from "lucide-react";
+import {
+  ChevronDown,
+  ImagePlus,
+  Layers,
+  Palette,
+  Scissors,
+  Sparkles,
+  Trash2,
+  Undo2,
+  Wand2,
+  X,
+} from "lucide-react";
 import { STYLE_PRESETS } from "@latteart/shared";
 import { enhancePrompt } from "../api/enhance";
 import { ACTIONS } from "../lib/actions";
@@ -8,6 +19,8 @@ import { useDocument } from "../stores/documentStore";
 import { useGeneration, type QueuedJob } from "../stores/generationStore";
 import { useProviders } from "../stores/providersStore";
 import { SIZE_PRESETS, useSession } from "../stores/sessionStore";
+import { useStyles } from "../stores/stylesStore";
+import { NewStyleDialog } from "./NewStyleDialog";
 
 const cardBase: React.CSSProperties = {
   width: "100%",
@@ -326,15 +339,34 @@ export function PromptBar() {
   const start = useGeneration((s) => s.start);
   const setError = useGeneration((s) => s.setError);
 
+  const customStyles = useStyles((s) => s.customStyles);
+  const removeStyle = useStyles((s) => s.remove);
+
   const [prompt, setPrompt] = useState("");
   const [focused, setFocused] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
+  const [styleDialogOpen, setStyleDialogOpen] = useState(false);
   // The pre-enhance draft, so a single tap reverts. Cleared once the user edits.
   const [preEnhance, setPreEnhance] = useState<string | null>(null);
   const enhanceCtl = useRef<AbortController | null>(null);
 
   const active = providers.find((p) => p.id === providerId);
-  const activeStyle = STYLE_PRESETS.find((s) => s.id === styleId) ?? STYLE_PRESETS[0]!;
+  // The active style label — a custom style wins over a preset of the same id
+  // (ids never collide, but this order keeps the lookup unambiguous). "none" and
+  // any dangling id (e.g. a deleted custom style) read as the muted placeholder.
+  const activeStyleLabel =
+    styleId === "none"
+      ? "Style"
+      : (customStyles.find((s) => s.id === styleId)?.label ??
+        STYLE_PRESETS.find((s) => s.id === styleId)?.label ??
+        "Style");
+  const styleActive = activeStyleLabel !== "Style";
+
+  const deleteStyle = (id: string) => {
+    // Drop the selection back to None if the style in use is the one removed.
+    if (styleId === id) setStyle("none");
+    void removeStyle(id);
+  };
 
   // The bar never locks while a job runs — submitting mid-run queues the job.
   const canGenerate = prompt.trim().length > 0 && !!active?.available;
@@ -507,14 +539,95 @@ export function PromptBar() {
           <DropdownMenu.Trigger asChild>
             <button type="button" style={pillBtn}>
               <Palette size={13} strokeWidth={1.9} color="var(--text-faint)" />
-              <span style={{ color: styleId === "none" ? "var(--text-muted)" : "var(--text)" }}>
-                {styleId === "none" ? "Style" : activeStyle.label}
+              <span style={{ color: styleActive ? "var(--text)" : "var(--text-muted)" }}>
+                {activeStyleLabel}
               </span>
               <ChevronDown size={13} strokeWidth={1.9} color="var(--text-faint)" />
             </button>
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
-            <DropdownMenu.Content className="dd-content" sideOffset={8} align="end">
+            <DropdownMenu.Content
+              className="dd-content"
+              sideOffset={8}
+              align="end"
+              style={{ maxHeight: 420, overflowY: "auto" }}
+            >
+              {/* custom styles — the user's own image-derived library */}
+              <DropdownMenu.Item
+                className="dd-item"
+                style={{ gap: 8, color: "var(--accent)", fontWeight: 500 }}
+                onSelect={() => setStyleDialogOpen(true)}
+              >
+                <ImagePlus size={14} strokeWidth={1.9} />
+                New style from images…
+              </DropdownMenu.Item>
+
+              {customStyles.map((s) => (
+                <DropdownMenu.Item
+                  key={s.id}
+                  className="dd-item"
+                  style={{ gap: 9, alignItems: "center" }}
+                  onSelect={() => setStyle(s.id)}
+                >
+                  <span
+                    style={{
+                      width: 22,
+                      height: 22,
+                      flex: "none",
+                      borderRadius: 5,
+                      border: "1px solid var(--border)",
+                      background: s.thumbnail
+                        ? `center/cover url(${s.thumbnail})`
+                        : "var(--surface-2)",
+                    }}
+                  />
+                  <span
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      color: s.id === styleId ? "var(--accent)" : "var(--text)",
+                      fontWeight: s.id === styleId ? 600 : 400,
+                    }}
+                  >
+                    {s.label}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Delete ${s.label}`}
+                    title="Delete style"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      deleteStyle(s.id);
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 22,
+                      height: 22,
+                      flex: "none",
+                      padding: 0,
+                      borderRadius: 5,
+                      background: "transparent",
+                      border: "none",
+                      color: "var(--text-faint)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <Trash2 size={13} strokeWidth={1.8} />
+                  </button>
+                </DropdownMenu.Item>
+              ))}
+
+              <DropdownMenu.Separator
+                style={{ height: 1, background: "var(--border)", margin: "6px 0" }}
+              />
+
               {STYLE_PRESETS.map((s) => (
                 <DropdownMenu.Item
                   key={s.id}
@@ -589,6 +702,12 @@ export function PromptBar() {
           {busy || queued ? "Queue" : "Generate"}
         </button>
       </div>
+
+      <NewStyleDialog
+        open={styleDialogOpen}
+        onOpenChange={setStyleDialogOpen}
+        onCreated={(info) => setStyle(info.id)}
+      />
     </div>
   );
 }

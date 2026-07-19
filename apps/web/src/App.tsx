@@ -11,16 +11,19 @@ import { ZoomControl } from "./components/ZoomControl";
 import { useLLM } from "./stores/llmStore";
 import { initProjectSync } from "./stores/projectStore";
 import { useProviders } from "./stores/providersStore";
+import { useStyles } from "./stores/stylesStore";
 
 export default function App() {
   const refresh = useProviders((s) => s.refresh);
   const refreshLLM = useLLM((s) => s.refresh);
+  const refreshStyles = useStyles((s) => s.refresh);
 
   useEffect(() => {
     void refresh();
     void refreshLLM();
+    void refreshStyles();
     void initProjectSync();
-  }, [refresh, refreshLLM]);
+  }, [refresh, refreshLLM, refreshStyles]);
 
   return (
     <div
