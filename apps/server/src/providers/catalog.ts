@@ -52,9 +52,9 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     id: "openai",
     label: "OpenAI",
     kind: "cloud",
-    blurb: "GPT Image 1 · generate, edit & inpaint",
+    blurb: "GPT Image 1 · generate, edit, inpaint & outpaint",
     requiresKey: true,
-    capabilities: caps({ txt2img: true, img2img: true, inpaint: true }),
+    capabilities: caps({ txt2img: true, img2img: true, inpaint: true, outpaint: true }),
     models: [{ id: "gpt-image-1", label: "GPT Image 1" }],
     implemented: true,
     keyPlaceholder: "Paste your OpenAI API key…",
@@ -99,9 +99,15 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     kind: "local",
     blurb: "Offline placeholder generator · no key needed",
     requiresKey: false,
-    // Inpaint composites through the mask (SVG), so Edit area works offline;
-    // upscale echoes the source, so the Upscale action runs offline too.
-    capabilities: caps({ txt2img: true, img2img: true, inpaint: true, upscale: true }),
+    // Inpaint & outpaint composite through the mask (SVG), so Edit area and
+    // Expand work offline; upscale echoes the source, so Upscale runs offline too.
+    capabilities: caps({
+      txt2img: true,
+      img2img: true,
+      inpaint: true,
+      outpaint: true,
+      upscale: true,
+    }),
     models: [{ id: "mock-diffusion", label: "Mock Diffusion" }],
     implemented: true,
   },

@@ -79,10 +79,13 @@ function placeholderSvg(prompt: string, width: number, height: number, seed: num
 }
 
 /**
- * Inpaint placeholder: the original image with only the masked region replaced
- * by a bright gradient. An SVG luminance mask (white in the PNG = regenerate)
- * composites the fill over the source, so the mock genuinely honors the mask —
- * letting the whole inpaint flow verify offline without a raster library.
+ * Masked-fill placeholder: the original image with only the masked region
+ * replaced by a bright gradient. An SVG luminance mask (white in the PNG =
+ * regenerate) composites the fill over the source, so the mock genuinely honors
+ * the mask — letting inpaint *and* outpaint verify offline without a raster
+ * library. For outpaint the "source" is the original padded onto a larger
+ * transparent canvas and the mask marks that new padding, so the gradient fills
+ * the expansion while the original pixels show through untouched.
  */
 function inpaintSvg(
   prompt: string,
@@ -124,15 +127,16 @@ export const mockProvider: ImageProvider = {
   label: "Mock",
   kind: "local",
   requiresKey: false,
-  // Inpaint honored via SVG mask compositing (see edit()), so the whole
-  // edit-area flow verifies offline on the default provider. img2img still
-  // emits a fresh placeholder. Upscale (see upscale()) echoes the source so the
-  // Upscale action runs end-to-end offline too.
+  // Inpaint & outpaint are honored via SVG mask compositing (see edit()), so the
+  // whole edit-area / expand flow verifies offline on the default provider.
+  // img2img still emits a fresh placeholder. Upscale (see upscale()) echoes the
+  // source so the Upscale action runs end-to-end offline too.
   capabilities: {
     ...noCapabilities(),
     txt2img: true,
     img2img: true,
     inpaint: true,
+    outpaint: true,
     upscale: true,
   },
 
@@ -175,9 +179,11 @@ export const mockProvider: ImageProvider = {
 
   /**
    * Mock edit. img2img emits a fresh placeholder (strength shifts the palette so
-   * remix similarity stops stay distinguishable offline); inpaint composites a
-   * gradient fill over the source through the mask, so only the painted region
-   * changes — a faithful offline stand-in for a real inpaint.
+   * remix similarity stops stay distinguishable offline); inpaint and outpaint
+   * composite a gradient fill over the source through the mask, so only the
+   * masked region changes — a faithful offline stand-in. Outpaint's source is
+   * the original padded onto the expanded canvas, so the fill lands in the new
+   * area and the original pixels show through untouched.
    */
   async edit(req: EditRequest, ctx: ProviderContext, signal?: AbortSignal): Promise<GenResult> {
     const totalSteps = 24;
@@ -194,8 +200,11 @@ export const mockProvider: ImageProvider = {
       });
     }
 
-    const inpaint = req.mode === "inpaint" && !!req.mask && req.image.startsWith("data:");
-    const dataUrl = inpaint
+    const masked =
+      (req.mode === "inpaint" || req.mode === "outpaint") &&
+      !!req.mask &&
+      req.image.startsWith("data:");
+    const dataUrl = masked
       ? inpaintSvg(req.prompt, req.image, req.mask!, width, height, seed)
       : placeholderSvg(`edit · ${req.prompt}`, width, height, seed);
 

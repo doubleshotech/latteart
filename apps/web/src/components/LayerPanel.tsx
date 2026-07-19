@@ -7,6 +7,7 @@ import { useGeneration } from "../stores/generationStore";
 import { useSession } from "../stores/sessionStore";
 import { ActionDrillIn } from "./ActionDrillIn";
 import { ActionsDock } from "./ActionsDock";
+import { OutpaintDrillIn } from "./OutpaintDrillIn";
 import { SmartEditPanel } from "./SmartEditPanel";
 
 function Thumb({ layer }: { layer: Layer }) {
@@ -329,6 +330,8 @@ export function LayerPanel() {
       <aside style={aside}>
         {actionView.kind === "smart-edit" ? (
           <SmartEditPanel source={drillSource} />
+        ) : actionView.kind === "outpaint" ? (
+          <OutpaintDrillIn source={drillSource} />
         ) : (
           <ActionDrillIn view={actionView} source={drillSource} />
         )}

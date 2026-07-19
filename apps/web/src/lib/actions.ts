@@ -1,5 +1,6 @@
 import {
   Eraser,
+  Expand,
   Image as ImageIcon,
   LayoutGrid,
   Maximize2,
@@ -11,7 +12,8 @@ import {
 import type { Provider } from "../api/client";
 
 /** Editor actions that run against a single source layer (img2img, inpaint for
- * edit-area / smart-edit, or a prompt-less resolution upscale). */
+ * edit-area / smart-edit, an outpaint expand, or a prompt-less resolution
+ * upscale). */
 export type ActionKind =
   | "remix"
   | "remove-bg"
@@ -19,6 +21,7 @@ export type ActionKind =
   | "variations"
   | "edit-area"
   | "smart-edit"
+  | "outpaint"
   | "upscale";
 
 /** Actions that inpaint (a mask + `mode:"inpaint"`) rather than whole-image
@@ -41,6 +44,13 @@ export function inpaintBlockedNote(active: Provider | undefined): string | null 
 export function upscaleBlockedNote(active: Provider | undefined): string | null {
   if (!active?.available) return "Connect a provider in Settings";
   if (!active.capabilities.upscale) return `${active.label} can't upscale — try Fal.ai`;
+  return null;
+}
+
+/** Why outpaint (Expand) is unavailable for `active`, or null when it can. */
+export function outpaintBlockedNote(active: Provider | undefined): string | null {
+  if (!active?.available) return "Connect a provider in Settings";
+  if (!active.capabilities.outpaint) return `${active.label} can't expand — try OpenAI or Mock`;
   return null;
 }
 
@@ -120,6 +130,23 @@ export const ACTIONS: Record<ActionKind, ActionMeta> = {
     // Inpaint with an auto-derived mask; the prompt describes the region fill.
     prompt: (userPrompt) => userPrompt,
     layerName: (sourceName) => `${sourceName} — smart edit`,
+  },
+  outpaint: {
+    icon: Expand,
+    label: "Outpaint",
+    title: ({ sourceName }) => `Expanding “${sourceName}”…`,
+    canvasLabel: "EXPANDING",
+    // Masked fill of the new border region. The user prompt (optional) describes
+    // what to add; otherwise steer the model to extend the existing scene.
+    prompt: (userPrompt) =>
+      userPrompt
+        ? `Extend this image outward into the surrounding empty area with: ${userPrompt}. ` +
+          "Continue the scene seamlessly — match the perspective, lighting, colors, and " +
+          "style of the original so the new border blends invisibly."
+        : "Extend this image outward to fill the surrounding empty area. Continue the existing " +
+          "scene seamlessly in every direction — match the perspective, lighting, colors, and " +
+          "style so the new border blends invisibly with the original.",
+    layerName: (sourceName) => `${sourceName} — expanded`,
   },
   upscale: {
     icon: Maximize2,
