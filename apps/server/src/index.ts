@@ -4,6 +4,7 @@ import type { Context } from "hono";
 import { logger } from "hono/logger";
 import { streamSSE } from "hono/streaming";
 import type {
+  CreateStyleApiRequest,
   EditRequest,
   EnhanceApiRequest,
   EnhanceApiResponse,
@@ -18,7 +19,7 @@ import type {
   ProviderContext,
   UpscaleRequest,
 } from "@latteart/shared";
-import { applyStyle, stylePreset } from "@latteart/shared";
+import { composeStyle, stylePreset } from "@latteart/shared";
 import { PROVIDER_CATALOG, catalogEntry } from "./providers/catalog.ts";
 import type { ProviderCatalogEntry } from "./providers/catalog.ts";
 import { listComfyCheckpoints } from "./providers/comfyui.ts";
@@ -26,6 +27,26 @@ import { getProvider } from "./providers/registry.ts";
 import { getLLMProvider, listLLMProviders, resolveLLMProvider } from "./llm/registry.ts";
 import { deleteSecret, getSecretValue, hasSecret, setSecret } from "./keystore/index.ts";
 import { DEFAULT_PROJECT_ID, loadProject, saveProject } from "./projects/index.ts";
+import {
+  createStyle,
+  deleteStyle,
+  getStyleFragment,
+  listStyles,
+  nextStyleLabel,
+} from "./styles/index.ts";
+import { heuristicDescriptor } from "./styles/heuristic.ts";
+
+/**
+ * Resolve a style id to its composition fragment: a built-in preset first, then
+ * a user's custom style from the on-disk library. Shared by /api/generate and
+ * /api/edit so preset and `custom:*` ids compose identically. A provided-but-
+ * unresolvable id returns undefined — the routes treat that as "unknown style".
+ * Reads the style manifest at most once per request (only for a custom id).
+ */
+function resolveStyleFragment(styleId: string | undefined) {
+  if (!styleId) return undefined;
+  return stylePreset(styleId) ?? getStyleFragment(styleId);
+}
 
 /**
  * The latteart local backend. One user, on the user's machine. It holds provider
@@ -177,16 +198,16 @@ const routes = app
     const provider = getProvider(providerId);
     const prompt = String(body.prompt ?? "").trim();
     const styleId = body.styleId === undefined ? undefined : String(body.styleId);
+    const styleFragment = resolveStyleFragment(styleId);
 
     if (!entry) return c.json({ error: "unknown provider" }, 404);
     if (!provider) return c.json({ error: `provider '${providerId}' is not available yet` }, 400);
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
-    if (styleId !== undefined && !stylePreset(styleId))
-      return c.json({ error: "unknown style" }, 400);
+    if (styleId !== undefined && !styleFragment) return c.json({ error: "unknown style" }, 400);
     if (provider.requiresKey && !hasSecret(providerId))
       return c.json({ error: "missing API key" }, 400);
 
-    const styled = applyStyle(prompt, styleId, body.negativePrompt);
+    const styled = composeStyle(prompt, styleFragment, body.negativePrompt);
     const req: GenerateRequest = {
       providerId,
       model: body.model,
@@ -212,6 +233,7 @@ const routes = app
     const prompt = String(body.prompt ?? "").trim();
     const image = typeof body.image === "string" ? body.image : "";
     const styleId = body.styleId === undefined ? undefined : String(body.styleId);
+    const styleFragment = resolveStyleFragment(styleId);
 
     if (!entry) return c.json({ error: "unknown provider" }, 404);
     if (!provider) return c.json({ error: `provider '${providerId}' is not available yet` }, 400);
@@ -219,12 +241,11 @@ const routes = app
       return c.json({ error: `${entry.label} does not support editing yet` }, 400);
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
     if (!image.startsWith("data:")) return c.json({ error: "a source image is required" }, 400);
-    if (styleId !== undefined && !stylePreset(styleId))
-      return c.json({ error: "unknown style" }, 400);
+    if (styleId !== undefined && !styleFragment) return c.json({ error: "unknown style" }, 400);
     if (provider.requiresKey && !hasSecret(providerId))
       return c.json({ error: "missing API key" }, 400);
 
-    const styled = applyStyle(prompt, styleId, body.negativePrompt);
+    const styled = composeStyle(prompt, styleFragment, body.negativePrompt);
     const req: EditRequest = {
       providerId,
       model: body.model,
@@ -339,6 +360,63 @@ const routes = app
       const message = (err as Error)?.message ?? "inpaint prompt rewrite failed";
       return c.json({ error: message }, 502);
     }
+  })
+
+  // Custom styles (reusable, image-derived). The user's own style library, on
+  // disk like projects. A style is a distilled text descriptor composed into
+  // generation prompts through the same path as a built-in preset.
+  .get("/api/styles", (c) => c.json(listStyles()))
+
+  // Create a custom style from reference image(s). A vision LLM distills them
+  // into a descriptor when one is reachable; otherwise the offline color/tone
+  // heuristic (from the client's paletteHint) keeps creation working offline.
+  .post("/api/styles", async (c) => {
+    const body = await c.req
+      .json<Partial<CreateStyleApiRequest>>()
+      .catch(() => ({}) as Partial<CreateStyleApiRequest>);
+    const images = Array.isArray(body.images)
+      ? body.images.filter((i): i is string => typeof i === "string" && i.startsWith("data:"))
+      : [];
+    if (images.length === 0)
+      return c.json({ error: "at least one reference image is required" }, 400);
+
+    const label = String(body.label ?? "").trim() || nextStyleLabel();
+    const providerId = body.providerId === undefined ? undefined : String(body.providerId);
+    const ctxFor = (id: string): LLMContext => ({ baseUrl: getSecretValue(id) });
+
+    // Vision distillation when available, else the offline heuristic. Either
+    // path yields a { prompt, negativePrompt? } fragment; only the quality and
+    // the recorded `source` differ.
+    let descriptor: { prompt: string; negativePrompt?: string };
+    let source: "vision" | "heuristic" = "heuristic";
+    try {
+      const llm = await resolveLLMProvider(providerId, ctxFor);
+      if (llm.describeStyle) {
+        descriptor = await llm.describeStyle(images, ctxFor(llm.id), c.req.raw.signal);
+        source = "vision";
+      } else {
+        descriptor = heuristicDescriptor(body.paletteHint);
+      }
+    } catch {
+      // No vision model (or the call failed) — fall back so creation never blocks.
+      descriptor = heuristicDescriptor(body.paletteHint);
+    }
+
+    const info = createStyle({
+      label,
+      prompt: descriptor.prompt,
+      negativePrompt: descriptor.negativePrompt,
+      source,
+      thumbnail: typeof body.thumbnail === "string" ? body.thumbnail : undefined,
+      images,
+    });
+    return c.json(info);
+  })
+
+  // Delete a custom style and prune its assets.
+  .delete("/api/styles/:id", (c) => {
+    deleteStyle(c.req.param("id"));
+    return c.json({ ok: true } as const);
   });
 
 /** Consumed by the web client as `hc<AppType>()` — type-only, never bundled. */

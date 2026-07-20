@@ -108,18 +108,41 @@ export function stylePreset(id: string): StylePreset | undefined {
   return STYLE_PRESETS.find((s) => s.id === id);
 }
 
+/** The minimal shape a style contributes to composition: a prompt fragment and
+ * an optional negative fragment. Both {@link StylePreset} and a user's custom
+ * style (resolved server-side) satisfy it, so both compose through one path. */
+export interface StyleFragment {
+  prompt: string;
+  negativePrompt?: string;
+}
+
 /**
- * Compose a style preset into a prompt + negativePrompt pair. Unknown or
- * empty styles pass both through untouched.
+ * Compose a resolved style fragment into a prompt + negativePrompt pair. A
+ * missing or empty fragment passes both through untouched. This is the single
+ * composition primitive — presets and custom styles both flow through it; only
+ * how the fragment is *resolved* (constant array vs. server store) differs.
+ */
+export function composeStyle(
+  prompt: string,
+  fragment?: StyleFragment,
+  negativePrompt?: string,
+): { prompt: string; negativePrompt?: string } {
+  if (!fragment?.prompt) return { prompt, negativePrompt };
+  const styled = `${prompt.replace(/[.\s]+$/, "")}. Style: ${fragment.prompt}.`;
+  const negative =
+    [negativePrompt, fragment.negativePrompt].filter(Boolean).join(", ") || undefined;
+  return { prompt: styled, negativePrompt: negative };
+}
+
+/**
+ * Compose a style *preset* into a prompt + negativePrompt pair. Unknown or
+ * empty styles pass both through untouched. Thin wrapper over
+ * {@link composeStyle} that resolves the id against {@link STYLE_PRESETS}.
  */
 export function applyStyle(
   prompt: string,
   styleId?: string,
   negativePrompt?: string,
 ): { prompt: string; negativePrompt?: string } {
-  const style = styleId ? stylePreset(styleId) : undefined;
-  if (!style?.prompt) return { prompt, negativePrompt };
-  const styled = `${prompt.replace(/[.\s]+$/, "")}. Style: ${style.prompt}.`;
-  const negative = [negativePrompt, style.negativePrompt].filter(Boolean).join(", ") || undefined;
-  return { prompt: styled, negativePrompt: negative };
+  return composeStyle(prompt, styleId ? stylePreset(styleId) : undefined, negativePrompt);
 }

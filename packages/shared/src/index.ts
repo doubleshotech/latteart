@@ -21,10 +21,15 @@ export type {
   EnhanceApiResponse,
   InpaintPromptApiRequest,
   InpaintPromptApiResponse,
+  StyleSource,
+  CustomStyle,
+  CustomStyleInfo,
+  PaletteHint,
+  CreateStyleApiRequest,
 } from "./types.ts";
 
-export type { StylePreset } from "./styles.ts";
-export { STYLE_PRESETS, stylePreset, applyStyle } from "./styles.ts";
+export type { StylePreset, StyleFragment } from "./styles.ts";
+export { STYLE_PRESETS, stylePreset, applyStyle, composeStyle } from "./styles.ts";
 
 export type { ProjectLayer, ProjectViewport, ProjectSession, ProjectDoc } from "./project.ts";
 

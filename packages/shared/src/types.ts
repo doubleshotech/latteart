@@ -201,6 +201,17 @@ export interface LLMProvider {
     signal?: AbortSignal,
     context?: string,
   ): Promise<string>;
+  /**
+   * Distill one or more reference images into a reusable text style descriptor
+   * (a prompt fragment + optional negatives) for a custom style. Needs a
+   * vision-capable model, so it's optional: an engine without one omits it and
+   * the backend falls back to a color/tone heuristic. `images` are data: URLs.
+   */
+  describeStyle?(
+    images: string[],
+    ctx?: LLMContext,
+    signal?: AbortSignal,
+  ): Promise<{ prompt: string; negativePrompt?: string }>;
 }
 
 /** Safe, public description of an LLM enhancement engine sent to the frontend. */
@@ -281,4 +292,73 @@ export interface InpaintPromptApiResponse {
   prompt: string;
   /** Human label of the engine that produced it. */
   provider: string;
+}
+
+/** How a custom style's descriptor was produced. */
+export type StyleSource = "vision" | "heuristic";
+
+/**
+ * A user-derived custom style, stored server-side. Its {@link prompt} fragment
+ * composes into generation prompts through the exact same path as a built-in
+ * {@link StylePreset} (see `composeStyle`); the difference is only where the
+ * fragment is resolved. `refs` keeps the source reference images (as on-disk
+ * asset refs) so a future provider with native reference-image conditioning can
+ * use the pixels directly instead of the distilled text.
+ */
+export interface CustomStyle {
+  /** Namespaced id, e.g. `custom:ab12cd34` — never collides with preset ids. */
+  id: string;
+  label: string;
+  /** Distilled style descriptor — the prompt fragment (same role as StylePreset.prompt). */
+  prompt: string;
+  /** Optional negatives merged into the request's negativePrompt. */
+  negativePrompt?: string;
+  /** Small preview (a downscaled reference) as a data: URL when rehydrated. */
+  thumbnail?: string;
+  /** Whether a vision model or the offline color/tone heuristic produced it. */
+  source: StyleSource;
+  /** On-disk asset refs for the source reference images (native-conditioning door). */
+  refs: string[];
+  createdAt: number;
+}
+
+/**
+ * Public description of a custom style for the picker — the label, thumbnail,
+ * and provenance, but not the descriptor text (composition stays server-side).
+ */
+export interface CustomStyleInfo {
+  id: string;
+  label: string;
+  thumbnail?: string;
+  source: StyleSource;
+  createdAt: number;
+}
+
+/**
+ * Client-computed color/tone summary of the reference images, sent with a
+ * create-style request. It's the input to the offline heuristic descriptor when
+ * no vision model is reachable; extraction runs in the browser (canvas decodes
+ * any format) so the backend stays image-decode-free.
+ */
+export interface PaletteHint {
+  /** Dominant colors as `#rrggbb`, most-prominent first. */
+  colors: string[];
+  /** Mean luminance, 0..1. */
+  brightness: number;
+  /** Mean saturation, 0..1. */
+  saturation: number;
+}
+
+/** Request body for `POST /api/styles` — create a custom style from images. */
+export interface CreateStyleApiRequest {
+  /** Reference images as data: URLs (at least one). */
+  images: string[];
+  /** Optional client-computed palette summary — the offline heuristic's input. */
+  paletteHint?: PaletteHint;
+  /** Optional user-supplied name; the server derives one when omitted. */
+  label?: string;
+  /** Small preview data: URL for the picker; the server stores it as an asset. */
+  thumbnail?: string;
+  /** Optional explicit LLM provider id; omitted → the server picks the best available. */
+  providerId?: string;
 }
