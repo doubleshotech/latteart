@@ -75,6 +75,43 @@ function parseDataUrl(url: string): { mimeType: string; data: string } | null {
 }
 
 /**
+ * Custom styles v2 — native reference-image conditioning. Turn a style's source
+ * images into Gemini `inlineData` parts appended AFTER the prompt text, so they
+ * become "the final N images" the framing instruction refers to. Returns null
+ * when there are none (or none decode), so the caller keeps the plain path.
+ */
+function styleRefParts(styleRefs: string[] | undefined) {
+  if (!styleRefs?.length) return null;
+  const parts = styleRefs
+    .map(parseDataUrl)
+    .filter((p): p is { mimeType: string; data: string } => p !== null)
+    .map((p) => ({ inlineData: { mimeType: p.mimeType, data: p.data } }));
+  return parts.length > 0 ? parts : null;
+}
+
+/**
+ * The crux of native conditioning: without this, Gemini treats an extra image as
+ * content to blend or edit. This tells it the trailing image(s) are a *style*
+ * guide only — emulate the look, don't reproduce the subject. Appended to the
+ * generation/edit instruction whenever style refs are present.
+ */
+function styleRefInstruction(count: number): string {
+  const subject =
+    count === 1
+      ? "The final image is a STYLE REFERENCE"
+      : `The final ${count} images are STYLE REFERENCES`;
+  const poss = count === 1 ? "its" : "their";
+  const obj = count === 1 ? "it" : "them";
+  return `\n\n${subject}, not content to reproduce. Match ${poss} artistic style — color palette, lighting, texture, brushwork, and overall rendering — while creating the scene described above. Do not copy the subject, objects, or composition of ${obj}.`;
+}
+
+/** Suffix an instruction with the style-only framing when style refs are present
+ * — the shared shape used by both generate() and edit(). No-op when there are none. */
+function withStyleRefInstruction(base: string, refParts: unknown[] | null): string {
+  return refParts ? `${base}${styleRefInstruction(refParts.length)}` : base;
+}
+
+/**
  * Gemini has no native img2img denoising strength — `:generateContent` takes an
  * image plus an instruction. Translate the request's strength (0 = stay close,
  * 1 = reinvent) into phrasing so the remix similarity slider still steers it.
@@ -159,7 +196,9 @@ export const geminiProvider: ImageProvider = {
   label: "Google Gemini",
   kind: "cloud",
   requiresKey: true,
-  capabilities: { ...noCapabilities(), txt2img: true, img2img: true },
+  // styleRef: Gemini's multi-image contents array lets a custom style's source
+  // pixels ride along as native style conditioning (see generate/edit below).
+  capabilities: { ...noCapabilities(), txt2img: true, img2img: true, styleRef: true },
 
   async listModels(): Promise<ModelInfo[]> {
     return [
@@ -178,9 +217,15 @@ export const geminiProvider: ImageProvider = {
     }
     const model = req.model?.trim() || "gemini-2.5-flash-image";
 
+    // Native style conditioning: a custom style's reference pixels ride along as
+    // trailing image parts, with the prompt suffixed to mark them style-only.
+    const refParts = styleRefParts(req.styleRefs);
+    const text = withStyleRefInstruction(req.prompt, refParts);
+    const parts: unknown[] = [{ text }, ...(refParts ?? [])];
+
     // Single synchronous call — no step stream, so report coarse progress.
     ctx.onProgress?.(15);
-    const image = await generateContent(model, [{ text: req.prompt }], ctx.apiKey, signal, {
+    const image = await generateContent(model, parts, ctx.apiKey, signal, {
       aspectRatio: nearestAspectRatio(req.width, req.height),
     });
 
@@ -218,18 +263,23 @@ export const geminiProvider: ImageProvider = {
     }
     const model = req.model?.trim() || "gemini-2.5-flash-image";
 
-    const instruction =
+    const base =
       typeof req.strength === "number"
         ? `${req.prompt}\n\n${strengthInstruction(req.strength)}`
         : req.prompt;
 
+    // The source image is first (the thing being edited); any style refs trail
+    // it, so styleRefInstruction's "final N images" points at the refs, not it.
+    const refParts = styleRefParts(req.styleRefs);
+    const instruction = withStyleRefInstruction(base, refParts);
+    const parts: unknown[] = [
+      { text: instruction },
+      { inlineData: { mimeType: source.mimeType, data: source.data } },
+      ...(refParts ?? []),
+    ];
+
     ctx.onProgress?.(15);
-    const image = await generateContent(
-      model,
-      [{ text: instruction }, { inlineData: { mimeType: source.mimeType, data: source.data } }],
-      ctx.apiKey,
-      signal,
-    );
+    const image = await generateContent(model, parts, ctx.apiKey, signal);
 
     ctx.onProgress?.(100);
     return {

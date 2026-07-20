@@ -24,6 +24,13 @@ export interface ModelCapabilities {
   transparentLayers: boolean;
   controlnet: boolean;
   upscale: boolean;
+  /**
+   * Conditions on reference-image *pixels* as a native style guide (custom
+   * styles v2) — distinct from the distilled text descriptor every provider
+   * gets. Gates whether the route injects a custom style's source images into
+   * the request; providers without it fall back to the descriptor alone.
+   */
+  styleRef: boolean;
 }
 
 export interface ModelInfo {
@@ -40,6 +47,14 @@ export interface GenerateRequest {
   negativePrompt?: string;
   /** Style preset id from STYLE_PRESETS; the route composes it into the prompt. */
   styleId?: string;
+  /**
+   * Native style-reference pixels (data: URLs) — the source images of a custom
+   * style. The route injects them (from the on-disk style library) only when the
+   * style is `custom:*` and the provider's `styleRef` capability is set, so a
+   * provider without native conditioning simply never sees them and relies on
+   * the composed text descriptor instead. Purely additive; never sent by the client.
+   */
+  styleRefs?: string[];
   width: number;
   height: number;
   seed?: number;
@@ -57,6 +72,13 @@ export interface EditRequest {
   negativePrompt?: string;
   /** Style preset id from STYLE_PRESETS; the route composes it into the prompt. */
   styleId?: string;
+  /**
+   * Native style-reference pixels (data: URLs) for a custom style — injected by
+   * the route under the same rule as {@link GenerateRequest.styleRefs}. Distinct
+   * from {@link image}: `image` is the source being edited; these are a look to
+   * emulate. Providers without the `styleRef` capability never receive them.
+   */
+  styleRefs?: string[];
   /** Source image as a data: URL. */
   image: string;
   /** Mask as a data: URL (white = edit) for inpaint/outpaint. */

@@ -44,5 +44,6 @@ export function noCapabilities(): import("./types.ts").ModelCapabilities {
     transparentLayers: false,
     controlnet: false,
     upscale: false,
+    styleRef: false,
   };
 }

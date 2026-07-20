@@ -65,7 +65,8 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     kind: "cloud",
     blurb: "Nano Banana image models · Google AI Studio key",
     requiresKey: true,
-    capabilities: caps({ txt2img: true, img2img: true }),
+    // styleRef: conditions natively on a custom style's reference pixels (v2).
+    capabilities: caps({ txt2img: true, img2img: true, styleRef: true }),
     models: [
       { id: "gemini-2.5-flash-image", label: "Gemini 2.5 Flash Image" },
       { id: "gemini-3-pro-image", label: "Gemini 3 Pro Image" },
@@ -107,6 +108,8 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
       inpaint: true,
       outpaint: true,
       upscale: true,
+      // Native style refs pinned into the placeholder as a swatch, so v2 verifies offline.
+      styleRef: true,
     }),
     models: [{ id: "mock-diffusion", label: "Mock Diffusion" }],
     implemented: true,

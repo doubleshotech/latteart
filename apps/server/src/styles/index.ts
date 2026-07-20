@@ -73,11 +73,34 @@ export function listStyles(): CustomStyleInfo[] {
   }));
 }
 
-/** Resolve a custom style id to its composition fragment, or undefined. Shared
- * by the generate/edit routes so a `custom:*` id composes exactly like a preset. */
-export function getStyleFragment(id: string): StyleFragment | undefined {
-  const s = readManifest().find((x) => x.id === id);
-  return s ? { prompt: s.prompt, negativePrompt: s.negativePrompt } : undefined;
+/** Look up a custom style record by id (one manifest read), or undefined. */
+function findStyle(id: string): CustomStyle | undefined {
+  return readManifest().find((s) => s.id === id);
+}
+
+/**
+ * Resolve a custom style to its composition fragment plus (optionally) its
+ * source reference images as data: URLs — from a SINGLE manifest read, so the
+ * generate/edit routes never parse the library twice for one request. Shared by
+ * both routes so a `custom:*` id composes exactly like a preset. `withRefs`
+ * gates the heavier asset rehydration (the read-side of the `refs`
+ * "native-conditioning door"): the routes pass true only when the chosen
+ * provider conditions on the pixels natively (`styleRef` capability), so the
+ * disk reads happen just when the pixels will be used. `refs` is [] when there
+ * are none (or their assets have vanished); undefined for an unknown id.
+ */
+export function resolveCustomStyle(
+  id: string,
+  withRefs: boolean,
+): { fragment: StyleFragment; refs: string[] } | undefined {
+  const s = findStyle(id);
+  if (!s) return undefined;
+  return {
+    fragment: { prompt: s.prompt, negativePrompt: s.negativePrompt },
+    refs: withRefs
+      ? s.refs.map((ref) => readAsset(ASSETS_DIR, ref)).filter((url): url is string => !!url)
+      : [],
+  };
 }
 
 export interface CreateStyleInput {
