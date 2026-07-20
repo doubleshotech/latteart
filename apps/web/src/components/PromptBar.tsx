@@ -361,6 +361,10 @@ export function PromptBar() {
         STYLE_PRESETS.find((s) => s.id === styleId)?.label ??
         "Style");
   const styleActive = activeStyleLabel !== "Style";
+  // Custom styles v2: a "ref" badge when the selected style is a custom one AND
+  // the active provider conditions on its reference pixels natively (Gemini/mock).
+  // Presets and native-less providers fall back to the composed text descriptor.
+  const nativeStyleRef = styleId.startsWith("custom:") && !!active?.capabilities.styleRef;
 
   const deleteStyle = (id: string) => {
     // Drop the selection back to None if the style in use is the one removed.
@@ -542,6 +546,24 @@ export function PromptBar() {
               <span style={{ color: styleActive ? "var(--text)" : "var(--text-muted)" }}>
                 {activeStyleLabel}
               </span>
+              {nativeStyleRef && (
+                <span
+                  title="Native style — this provider conditions on the reference images directly, not just a text description"
+                  style={{
+                    fontSize: 8.5,
+                    fontWeight: 700,
+                    letterSpacing: 0.4,
+                    textTransform: "uppercase",
+                    color: "var(--accent)",
+                    border: "1px solid color-mix(in srgb, var(--accent) 40%, transparent)",
+                    borderRadius: 4,
+                    padding: "1px 3px",
+                    lineHeight: 1,
+                  }}
+                >
+                  ref
+                </span>
+              )}
               <ChevronDown size={13} strokeWidth={1.9} color="var(--text-faint)" />
             </button>
           </DropdownMenu.Trigger>

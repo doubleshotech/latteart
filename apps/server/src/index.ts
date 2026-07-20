@@ -17,6 +17,7 @@ import type {
   ProgressEvent,
   ProjectDoc,
   ProviderContext,
+  StyleFragment,
   UpscaleRequest,
 } from "@latteart/shared";
 import { composeStyle, stylePreset } from "@latteart/shared";
@@ -30,22 +31,30 @@ import { DEFAULT_PROJECT_ID, loadProject, saveProject } from "./projects/index.t
 import {
   createStyle,
   deleteStyle,
-  getStyleFragment,
   listStyles,
   nextStyleLabel,
+  resolveCustomStyle,
 } from "./styles/index.ts";
 import { heuristicDescriptor } from "./styles/heuristic.ts";
 
 /**
- * Resolve a style id to its composition fragment: a built-in preset first, then
- * a user's custom style from the on-disk library. Shared by /api/generate and
- * /api/edit so preset and `custom:*` ids compose identically. A provided-but-
- * unresolvable id returns undefined — the routes treat that as "unknown style".
- * Reads the style manifest at most once per request (only for a custom id).
+ * Resolve a style id to its composition fragment plus native reference pixels,
+ * shared by /api/generate and /api/edit so preset and `custom:*` ids compose
+ * identically. A built-in preset resolves without touching disk; a custom id is
+ * read from the on-disk library once (see {@link resolveCustomStyle}), and its
+ * reference images are rehydrated only when the chosen provider conditions on
+ * them natively (`styleRef` capability). A provided-but-unresolvable id returns
+ * undefined — the routes treat that as "unknown style". `refs` is [] whenever
+ * there's nothing to send, so it drops cleanly out of the request object.
  */
-function resolveStyleFragment(styleId: string | undefined) {
+function resolveStyle(
+  styleId: string | undefined,
+  entry: ProviderCatalogEntry,
+): { fragment: StyleFragment; refs: string[] } | undefined {
   if (!styleId) return undefined;
-  return stylePreset(styleId) ?? getStyleFragment(styleId);
+  const preset = stylePreset(styleId);
+  if (preset) return { fragment: preset, refs: [] };
+  return resolveCustomStyle(styleId, styleId.startsWith("custom:") && entry.capabilities.styleRef);
 }
 
 /**
@@ -198,22 +207,27 @@ const routes = app
     const provider = getProvider(providerId);
     const prompt = String(body.prompt ?? "").trim();
     const styleId = body.styleId === undefined ? undefined : String(body.styleId);
-    const styleFragment = resolveStyleFragment(styleId);
 
     if (!entry) return c.json({ error: "unknown provider" }, 404);
     if (!provider) return c.json({ error: `provider '${providerId}' is not available yet` }, 400);
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
-    if (styleId !== undefined && !styleFragment) return c.json({ error: "unknown style" }, 400);
+    // Resolve the style now that `entry` is known, so a custom style's native
+    // refs come from the same manifest read as its text fragment.
+    const style = resolveStyle(styleId, entry);
+    if (styleId !== undefined && !style) return c.json({ error: "unknown style" }, 400);
     if (provider.requiresKey && !hasSecret(providerId))
       return c.json({ error: "missing API key" }, 400);
 
-    const styled = composeStyle(prompt, styleFragment, body.negativePrompt);
+    const styled = composeStyle(prompt, style?.fragment, body.negativePrompt);
     const req: GenerateRequest = {
       providerId,
       model: body.model,
       prompt: styled.prompt,
       negativePrompt: styled.negativePrompt,
       styleId,
+      // Native style-ref pixels when the provider supports them; the composed
+      // text descriptor (above) stays as the provider-agnostic fallback.
+      styleRefs: style?.refs.length ? style.refs : undefined,
       width: Number(body.width) || 1024,
       height: Number(body.height) || 1024,
       seed: typeof body.seed === "number" ? body.seed : undefined,
@@ -233,7 +247,6 @@ const routes = app
     const prompt = String(body.prompt ?? "").trim();
     const image = typeof body.image === "string" ? body.image : "";
     const styleId = body.styleId === undefined ? undefined : String(body.styleId);
-    const styleFragment = resolveStyleFragment(styleId);
 
     if (!entry) return c.json({ error: "unknown provider" }, 404);
     if (!provider) return c.json({ error: `provider '${providerId}' is not available yet` }, 400);
@@ -241,17 +254,19 @@ const routes = app
       return c.json({ error: `${entry.label} does not support editing yet` }, 400);
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
     if (!image.startsWith("data:")) return c.json({ error: "a source image is required" }, 400);
-    if (styleId !== undefined && !styleFragment) return c.json({ error: "unknown style" }, 400);
+    const style = resolveStyle(styleId, entry);
+    if (styleId !== undefined && !style) return c.json({ error: "unknown style" }, 400);
     if (provider.requiresKey && !hasSecret(providerId))
       return c.json({ error: "missing API key" }, 400);
 
-    const styled = composeStyle(prompt, styleFragment, body.negativePrompt);
+    const styled = composeStyle(prompt, style?.fragment, body.negativePrompt);
     const req: EditRequest = {
       providerId,
       model: body.model,
       prompt: styled.prompt,
       negativePrompt: styled.negativePrompt,
       styleId,
+      styleRefs: style?.refs.length ? style.refs : undefined,
       image,
       mask: body.mask,
       mode: body.mode ?? "img2img",

@@ -44,8 +44,37 @@ function escapeXml(s: string): string {
   );
 }
 
-/** A neon-gradient placeholder, colored from the prompt — no network, no model. */
-function placeholderSvg(prompt: string, width: number, height: number, seed: number): string {
+/**
+ * Inset "style ref" swatch — the offline tell that native style-reference pixels
+ * (custom styles v2) reached the provider. A real styleRef provider (Gemini)
+ * conditions the whole output on the reference; the mock can't diffuse, so it
+ * pins the first reference into the corner instead, proving the pixels made it
+ * through the route. Empty string when there's no ref, so it drops out.
+ */
+function styleRefSwatch(styleRef: string | undefined, width: number): string {
+  if (!styleRef) return "";
+  const sw = Math.round(width * 0.22);
+  const pad = Math.round(width * 0.035);
+  const x = width - sw - pad;
+  const cap = Math.round(width * 0.022);
+  return `<g>
+    <rect x="${x - 3}" y="${pad - 3}" width="${sw + 6}" height="${sw + cap + 9}" rx="7" fill="#000" fill-opacity="0.4"/>
+    <image href="${escapeXml(styleRef)}" x="${x}" y="${pad}" width="${sw}" height="${sw}" preserveAspectRatio="xMidYMid slice"/>
+    <rect x="${x}" y="${pad}" width="${sw}" height="${sw}" rx="4" fill="none" stroke="#fff" stroke-opacity="0.85" stroke-width="2"/>
+    <text x="${x + sw / 2}" y="${pad + sw + cap + 1}" text-anchor="middle" font-family="ui-monospace, monospace" font-size="${cap}" fill="#fff" fill-opacity="0.8">style ref</text>
+  </g>`;
+}
+
+/** A neon-gradient placeholder, colored from the prompt — no network, no model.
+ * `styleRef` (optional) is a native style-reference image pinned into the corner
+ * so the styleRef path verifies offline. */
+function placeholderSvg(
+  prompt: string,
+  width: number,
+  height: number,
+  seed: number,
+  styleRef?: string,
+): string {
   const h1 = (hash(prompt) + seed) % 360;
   const h2 = (h1 + 55) % 360;
   const h3 = (h1 + 210) % 360;
@@ -74,6 +103,7 @@ function placeholderSvg(prompt: string, width: number, height: number, seed: num
     <text x="6%" y="90%" font-size="${Math.round(width * 0.03)}" font-weight="500" fill-opacity="0.92">${escapeXml(label)}</text>
     <text x="6%" y="95%" font-size="${Math.round(width * 0.021)}" fill-opacity="0.6">mock · ${width}×${height}</text>
   </g>
+  ${styleRefSwatch(styleRef, width)}
 </svg>`;
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
@@ -85,7 +115,8 @@ function placeholderSvg(prompt: string, width: number, height: number, seed: num
  * the mask — letting inpaint *and* outpaint verify offline without a raster
  * library. For outpaint the "source" is the original padded onto a larger
  * transparent canvas and the mask marks that new padding, so the gradient fills
- * the expansion while the original pixels show through untouched.
+ * the expansion while the original pixels show through untouched. A native style
+ * ref (custom styles v2) is pinned in as a swatch, same as the plain path.
  */
 function inpaintSvg(
   prompt: string,
@@ -94,6 +125,7 @@ function inpaintSvg(
   width: number,
   height: number,
   seed: number,
+  styleRef?: string,
 ): string {
   const h1 = (hash(prompt) + seed) % 360;
   const h2 = (h1 + 55) % 360;
@@ -113,6 +145,7 @@ function inpaintSvg(
   </defs>
   <image href="${escapeXml(image)}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="none"/>
   <rect width="100%" height="100%" fill="url(#fill)" mask="url(#edit)"/>
+  ${styleRefSwatch(styleRef, width)}
 </svg>`;
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
@@ -138,6 +171,9 @@ export const mockProvider: ImageProvider = {
     inpaint: true,
     outpaint: true,
     upscale: true,
+    // Native style refs are pinned into the output as a swatch (see
+    // placeholderSvg), so custom styles v2 verifies offline on the default provider.
+    styleRef: true,
   },
 
   async listModels(): Promise<ModelInfo[]> {
@@ -165,7 +201,7 @@ export const mockProvider: ImageProvider = {
       id: crypto.randomUUID(),
       images: [
         {
-          dataUrl: placeholderSvg(req.prompt, req.width, req.height, seed),
+          dataUrl: placeholderSvg(req.prompt, req.width, req.height, seed, req.styleRefs?.[0]),
           width: req.width,
           height: req.height,
         },
@@ -205,8 +241,8 @@ export const mockProvider: ImageProvider = {
       !!req.mask &&
       req.image.startsWith("data:");
     const dataUrl = masked
-      ? inpaintSvg(req.prompt, req.image, req.mask!, width, height, seed)
-      : placeholderSvg(`edit · ${req.prompt}`, width, height, seed);
+      ? inpaintSvg(req.prompt, req.image, req.mask!, width, height, seed, req.styleRefs?.[0])
+      : placeholderSvg(`edit · ${req.prompt}`, width, height, seed, req.styleRefs?.[0]);
 
     return {
       id: crypto.randomUUID(),
