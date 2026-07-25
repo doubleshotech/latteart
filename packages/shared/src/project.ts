@@ -55,4 +55,26 @@ export interface ProjectDoc {
   layers: ProjectLayer[];
   viewport: ProjectViewport;
   session: ProjectSession;
+  /**
+   * A small flattened preview of the canvas, for the project switcher's list.
+   * Composited client-side on save. Follows the same wire-vs-disk split as a
+   * layer's `src`: a data: URL over the API, an `asset:<file>` ref on disk.
+   * Optional — projects saved before thumbnails existed simply have none.
+   */
+  thumbnail?: string | null;
+}
+
+/**
+ * A project as the switcher lists it — enough to render a row and open it,
+ * without paying for every layer's pixels. `thumbnail` is rehydrated to a data:
+ * URL (it's the only image the list needs).
+ */
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  /** Layer count, so the list can say "empty" without loading the document. */
+  layerCount: number;
+  thumbnail: string | null;
 }

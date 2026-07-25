@@ -27,7 +27,16 @@ import { listComfyCheckpoints } from "./providers/comfyui.ts";
 import { getProvider } from "./providers/registry.ts";
 import { getLLMProvider, listLLMProviders, resolveLLMProvider } from "./llm/registry.ts";
 import { deleteSecret, getSecretValue, hasSecret, setSecret } from "./keystore/index.ts";
-import { DEFAULT_PROJECT_ID, loadProject, saveProject } from "./projects/index.ts";
+import {
+  createProject,
+  deleteProject,
+  duplicateProject,
+  isValidProjectId,
+  listProjects,
+  loadProject,
+  renameProject,
+  saveProject,
+} from "./projects/index.ts";
 import {
   createStyle,
   deleteStyle,
@@ -175,12 +184,27 @@ const routes = app
     return c.json({ ok: true, id, hasKey: false });
   })
 
-  // Project persistence (v1: one implicit project). GET rehydrates layer
-  // images to data: URLs; PUT is the autosave sink — the whole document each
-  // time, pixels split out to content-hashed asset files on disk.
-  .get("/api/project", (c) => c.json(loadProject(DEFAULT_PROJECT_ID)))
+  // Projects. The list drives the topbar switcher; it carries each project's
+  // thumbnail but not its layer pixels, so opening the menu stays cheap.
+  .get("/api/projects", (c) => c.json(listProjects()))
 
-  .put("/api/project", async (c) => {
+  .post("/api/projects", async (c) => {
+    const body = await c.req.json<{ name?: string }>().catch(() => ({}) as { name?: string });
+    return c.json(createProject(body.name), 201);
+  })
+
+  // Per-project persistence. GET rehydrates layer images to data: URLs; PUT is
+  // the autosave sink — the whole document each time, pixels split out to
+  // content-hashed asset files on disk.
+  .get("/api/projects/:id", (c) => {
+    const id = c.req.param("id");
+    if (!isValidProjectId(id)) return c.json({ error: "invalid project id" }, 400);
+    return c.json(loadProject(id));
+  })
+
+  .put("/api/projects/:id", async (c) => {
+    const id = c.req.param("id");
+    if (!isValidProjectId(id)) return c.json({ error: "invalid project id" }, 400);
     const body = await c.req.json<ProjectDoc>().catch(() => null);
     if (
       !body ||
@@ -191,8 +215,34 @@ const routes = app
       body.session === null
     )
       return c.json({ error: "invalid project" }, 400);
-    const saved = saveProject(DEFAULT_PROJECT_ID, body);
+    const saved = saveProject(id, body);
     return c.json({ ok: true, updatedAt: saved.updatedAt });
+  })
+
+  .patch("/api/projects/:id", async (c) => {
+    const id = c.req.param("id");
+    if (!isValidProjectId(id)) return c.json({ error: "invalid project id" }, 400);
+    const body = await c.req.json<{ name?: string }>().catch(() => null);
+    if (!body || typeof body.name !== "string") return c.json({ error: "expected a name" }, 400);
+    const renamed = renameProject(id, body.name);
+    if (!renamed) return c.json({ error: "no such project" }, 404);
+    return c.json(renamed);
+  })
+
+  .post("/api/projects/:id/duplicate", async (c) => {
+    const id = c.req.param("id");
+    if (!isValidProjectId(id)) return c.json({ error: "invalid project id" }, 400);
+    const body = await c.req.json<{ name?: string }>().catch(() => ({}) as { name?: string });
+    const copy = duplicateProject(id, body.name);
+    if (!copy) return c.json({ error: "no such project" }, 404);
+    return c.json(copy, 201);
+  })
+
+  .delete("/api/projects/:id", (c) => {
+    const id = c.req.param("id");
+    if (!isValidProjectId(id)) return c.json({ error: "invalid project id" }, 400);
+    if (!deleteProject(id)) return c.json({ error: "no such project" }, 404);
+    return c.json({ ok: true });
   })
 
   // Generate. Returns an SSE stream of ProgressEvents ending in done/error/

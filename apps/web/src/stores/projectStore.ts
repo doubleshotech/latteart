@@ -1,33 +1,64 @@
 import { create } from "zustand";
-import type { ProjectDoc, ProjectLayer } from "@latteart/shared";
+import type { ProjectDoc, ProjectLayer, ProjectSummary } from "@latteart/shared";
 import { makeLayer, useDocument } from "./documentStore";
 import { SIZE_PRESETS, useSession } from "./sessionStore";
 import { useViewport } from "./viewportStore";
+import { resetHistory } from "./history";
+import { useGeneration } from "./generationStore";
+import { renderThumbnail } from "../lib/thumbnail";
 
 /**
- * Project autosave. There is no save button: `initProjectSync()` hydrates the
- * last-open project from the backend on boot, then subscribes to the document,
- * viewport, and session stores and PUTs the whole document to `/api/project`,
- * debounced. The only UI is the "Saving… / Saved ✓" whisper in the topbar,
- * driven by this store's `status`.
+ * Projects + autosave. There is no save button: `initProjectSync()` opens the
+ * last project from the backend on boot, then subscribes to the document,
+ * viewport, and session stores and PUTs the whole document to
+ * `/api/projects/<id>`, debounced. The only passive UI is the "Saving… /
+ * Saved ✓" whisper in the topbar, driven by this store's `status`; the topbar's
+ * project menu drives the switching and CRUD below.
  */
 
 export type SaveStatus = "idle" | "saving" | "saved" | "error";
 
 interface ProjectState {
-  /** v1: single implicit project — name has no UI yet, but survives on disk. */
+  /** The open project. Empty only before the first load resolves. */
+  id: string;
   name: string;
   createdAt: number;
   status: SaveStatus;
   savedAt: number | null;
+  /** Every project on disk, newest-edited first — the switcher's list. */
+  projects: ProjectSummary[];
+  /** True while a switch/create/duplicate is swapping the document. */
+  switching: boolean;
 }
 
 export const useProject = create<ProjectState>(() => ({
+  id: "",
   name: "Untitled",
   createdAt: Date.now(),
   status: "idle",
   savedAt: null,
+  projects: [],
+  switching: false,
 }));
+
+/** Remembers the open project across reloads; falls back to most-recent. */
+const LAST_PROJECT_KEY = "latteart.projectId";
+
+function rememberProject(id: string) {
+  try {
+    window.localStorage.setItem(LAST_PROJECT_KEY, id);
+  } catch {
+    // Private mode / storage disabled — we just lose the "reopen last" nicety.
+  }
+}
+
+function lastProjectId(): string | null {
+  try {
+    return window.localStorage.getItem(LAST_PROJECT_KEY);
+  } catch {
+    return null;
+  }
+}
 
 const DEBOUNCE_MS = 1500;
 const RETRY_MS = 5000;
@@ -59,7 +90,7 @@ function snapshot(): ProjectDoc {
   const meta = useProject.getState();
   return {
     version: 1,
-    id: "default",
+    id: meta.id,
     name: meta.name,
     createdAt: meta.createdAt,
     updatedAt: 0,
@@ -141,21 +172,36 @@ async function flush() {
     return;
   }
 
+  const doc = snapshot();
+  // Pin the target: `await`s below let a switch land mid-save, and the id in
+  // the store would then point at the *new* project. Everything after this
+  // line refers to the project this body actually serialized.
+  const id = doc.id;
+  if (!id) return;
+
   inFlight = true;
   useProject.setState({ status: "saving" });
   try {
-    const res = await fetch("/api/project", {
+    doc.thumbnail = await renderThumbnail(doc.layers);
+    const res = await fetch(`/api/projects/${id}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(snapshot()),
+      body: JSON.stringify(doc),
     });
     if (!res.ok) throw new Error(`save failed (${res.status})`);
-    savedKey = key;
-    useProject.setState({ status: "saved", savedAt: Date.now() });
+    // Only claim "saved" if we're still on the project we saved — otherwise the
+    // switch already reset savedKey for the newly opened document, and stamping
+    // this key over it would mark the new project clean before it's been read.
+    if (useProject.getState().id === id) {
+      savedKey = key;
+      useProject.setState({ status: "saved", savedAt: Date.now() });
+    }
   } catch {
     // Backend unreachable or write failed — keep the dirty state and retry.
-    useProject.setState({ status: "error" });
-    schedule(RETRY_MS);
+    if (useProject.getState().id === id) {
+      useProject.setState({ status: "error" });
+      schedule(RETRY_MS);
+    }
   } finally {
     inFlight = false;
     if (pendingAgain) {
@@ -180,20 +226,26 @@ function flushOnUnload() {
     timer = null;
   }
   if (changeKey() === savedKey) return;
-  void fetch("/api/project", {
+  const doc = snapshot();
+  if (!doc.id) return;
+  // No thumbnail on this path: rendering one is async, and awaiting it during
+  // unload is exactly when the page stops running. The pixels matter more than
+  // the preview, and the next normal save refreshes it.
+  void fetch(`/api/projects/${doc.id}`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(snapshot()),
+    body: JSON.stringify(doc),
     keepalive: true,
   }).catch(() => {});
 }
 
-function hydrate(doc: ProjectDoc) {
-  // The load is async; if the user already started editing during the window,
-  // don't clobber their live work with the saved project.
-  if (useDocument.getState().layers.length > 0) return;
+function hydrate(doc: ProjectDoc, opts: { force?: boolean } = {}) {
+  // The boot load is async; if the user already started editing during the
+  // window, don't clobber their live work with the saved project. An explicit
+  // switch forces through — replacing the document IS the intent there.
+  if (!opts.force && useDocument.getState().layers.length > 0) return;
 
-  useProject.setState({ name: doc.name, createdAt: doc.createdAt });
+  useProject.setState({ id: doc.id, name: doc.name, createdAt: doc.createdAt });
   useDocument.setState({
     layers: doc.layers.map((l) => makeLayer({ ...l, status: "ready", progress: 100 })),
     selectedId: null,
@@ -226,14 +278,46 @@ export async function initProjectSync(): Promise<void> {
   await loadThenArm();
 }
 
+/**
+ * Which project to open on boot: the one this browser had open, else the most
+ * recently edited, else a fresh one. The stored id is only a hint — a project
+ * deleted from another tab (or a wiped .data dir) falls through to the list.
+ */
+async function resolveBootProject(): Promise<ProjectDoc | null> {
+  const list = await fetchProjects();
+
+  const wanted = lastProjectId();
+  const candidates = [
+    ...(wanted && list.some((p) => p.id === wanted) ? [wanted] : []),
+    ...(list[0] ? [list[0].id] : []),
+  ];
+  for (const id of candidates) {
+    const res = await fetch(`/api/projects/${id}`);
+    if (!res.ok) continue;
+    const doc = (await res.json()) as ProjectDoc | null;
+    if (doc) return doc;
+  }
+
+  // Nothing on disk yet — first run.
+  if (list.length === 0) {
+    const res = await fetch("/api/projects", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Untitled" }),
+    });
+    if (res.ok) return (await res.json()) as ProjectDoc;
+  }
+  return null;
+}
+
 async function loadThenArm(): Promise<void> {
   let loaded = false;
   try {
-    const res = await fetch("/api/project");
-    if (res.ok) {
-      const doc = (await res.json()) as ProjectDoc | null;
-      if (doc) hydrate(doc);
-      loaded = true; // authoritative read — a null body means "no project yet"
+    const doc = await resolveBootProject();
+    if (doc) {
+      hydrate(doc);
+      rememberProject(doc.id);
+      loaded = true;
     }
   } catch {
     // Backend not up yet.
@@ -263,4 +347,135 @@ async function loadThenArm(): Promise<void> {
     if (document.visibilityState === "hidden") flushOnUnload();
   });
   window.addEventListener("pagehide", flushOnUnload);
+}
+
+/** Refresh the switcher's list. Failures leave the previous list in place. */
+export async function fetchProjects(): Promise<ProjectSummary[]> {
+  try {
+    const res = await fetch("/api/projects");
+    if (!res.ok) return useProject.getState().projects;
+    const list = (await res.json()) as ProjectSummary[];
+    useProject.setState({ projects: list });
+    return list;
+  } catch {
+    return useProject.getState().projects;
+  }
+}
+
+/**
+ * Open another project.
+ *
+ * Order matters: save what's open *first* (autosave is debounced, so there is
+ * almost always an unsaved edit sitting in the timer), then swap. The undo
+ * stack and the change-detection baseline both belong to the outgoing document
+ * and are reset, or the first edit in the new project would either resurrect
+ * the old one's layers or be mistaken for "nothing changed".
+ */
+export async function switchProject(id: string): Promise<void> {
+  const current = useProject.getState();
+  if (id === current.id || current.switching) return;
+  // A running job owns the document — it will drop its result onto whatever
+  // layers exist when it lands. Same reason `busy` gates undo/redo. The menu
+  // disables switching too; this is the backstop.
+  if (useGeneration.getState().busy) return;
+
+  useProject.setState({ switching: true });
+  try {
+    if (timer !== null) {
+      window.clearTimeout(timer);
+      timer = null;
+    }
+    await flush(); // persist the outgoing project before letting go of it
+
+    const res = await fetch(`/api/projects/${id}`);
+    if (!res.ok) throw new Error(`could not open project (${res.status})`);
+    const doc = (await res.json()) as ProjectDoc | null;
+    if (!doc) throw new Error("project not found");
+
+    resetHistory();
+    hydrate(doc, { force: true });
+    rememberProject(doc.id);
+    savedKey = changeKey(); // the freshly loaded doc is by definition clean
+    useProject.setState({ status: "saved", savedAt: Date.now() });
+    void fetchProjects();
+  } finally {
+    useProject.setState({ switching: false });
+  }
+}
+
+/** Create a project and open it. */
+export async function createProject(name?: string): Promise<void> {
+  const res = await fetch("/api/projects", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error("could not create the project");
+  const doc = (await res.json()) as ProjectDoc;
+  await switchProject(doc.id);
+}
+
+/** Rename a project. Renaming the open one updates the topbar in place. */
+export async function renameProject(id: string, name: string): Promise<void> {
+  const res = await fetch(`/api/projects/${id}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error("could not rename the project");
+  const doc = (await res.json()) as ProjectDoc;
+  if (useProject.getState().id === id) {
+    useProject.setState({ name: doc.name });
+    // The name is part of changeKey(), so re-baseline: this rename is already
+    // persisted, and leaving it dirty would trigger a redundant save.
+    savedKey = changeKey();
+  }
+  await fetchProjects();
+}
+
+/** Copy a project (pixels and all) and open the copy. */
+export async function duplicateProject(id: string): Promise<void> {
+  if (id === useProject.getState().id) await flush(); // copy the latest state
+  const res = await fetch(`/api/projects/${id}/duplicate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) throw new Error("could not duplicate the project");
+  const doc = (await res.json()) as ProjectDoc;
+  await switchProject(doc.id);
+}
+
+/**
+ * Delete a project. Deleting the open one moves to the next most recent, or to
+ * a fresh project when it was the last one — the studio always has a document.
+ */
+export async function deleteProject(id: string): Promise<void> {
+  const wasOpen = useProject.getState().id === id;
+  const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new Error("could not delete the project");
+
+  if (!wasOpen) {
+    await fetchProjects();
+    return;
+  }
+
+  // The open project is gone; nothing left to save from it.
+  if (timer !== null) {
+    window.clearTimeout(timer);
+    timer = null;
+  }
+  savedKey = changeKey();
+
+  const list = await fetchProjects();
+  const next = list.find((p) => p.id !== id);
+  if (next) {
+    // switchProject would try to save the deleted project first, so clear the
+    // id to make the pending-save check a no-op before handing over.
+    useProject.setState({ id: "" });
+    await switchProject(next.id);
+  } else {
+    useProject.setState({ id: "" });
+    await createProject("Untitled");
+  }
 }

@@ -141,3 +141,16 @@ export function undo(): void {
 export function redo(): void {
   step(future, past);
 }
+
+/**
+ * Drop the whole undo/redo stack. Called when the open project changes: the
+ * entries hold layers from the project being closed, so undoing across a switch
+ * would splice one project's layers into another.
+ */
+export function resetHistory(): void {
+  past = [];
+  future = [];
+  lastKey = null;
+  lastAt = 0;
+  syncFlags();
+}
