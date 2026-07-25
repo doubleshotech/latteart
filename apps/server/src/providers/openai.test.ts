@@ -258,13 +258,15 @@ const REF_B = "data:image/webp;base64,QkJC";
  * "SRC" (3 chars = 2 bytes) compares equal to the "SRA=" that round-tripping
  * through bytes produces.
  */
-const b64 = (payload: string) => Buffer.from(payload, "base64").toString("base64");
+function canonicalBase64(payload: string): string {
+  return Buffer.from(payload, "base64").toString("base64");
+}
 
 /** Read a text field off a multipart form (a file part reads as ""). */
-const textField = (form: FormData, name: string): string => {
+function textField(form: FormData, name: string): string {
   const value = form.get(name);
   return typeof value === "string" ? value : "";
-};
+}
 
 /** Read the bytes of every image part, in the order they were appended. */
 async function imageParts(form: FormData): Promise<string[]> {
@@ -294,7 +296,7 @@ describe("openai provider — style refs (txt2img)", () => {
     assert.ok(form instanceof FormData);
     assert.deepEqual(
       await imageParts(form),
-      [b64("QUFB"), b64("QkJC")],
+      [canonicalBase64("QUFB"), canonicalBase64("QkJC")],
       "refs ride along in order",
     );
     assert.equal(form.getAll("image[]").length, 2, "multiple images use the image[] field name");
@@ -365,22 +367,45 @@ describe("openai provider — style refs (txt2img)", () => {
 });
 
 describe("openai provider — style refs (edit)", () => {
-  it("appends refs after the source so the mask still lands on the source", async () => {
+  it("appends refs after the source on a whole-image edit", async () => {
     const { fetchImpl, calls } = openaiStub({ data: [{ b64_json: "OUT" }] });
     const openai = createOpenAIProvider({ fetchImpl });
-    const mask = whiteOnBlackMask([
-      [1, 0],
-      [0, 0],
-    ]);
 
-    await openai.edit!(editReq({ mode: "inpaint", mask, styleRefs: [REF_A] }), ctxWith());
+    await openai.edit!(editReq({ mode: "img2img", styleRefs: [REF_A] }), ctxWith());
 
     const form = calls[0]!.body as FormData;
-    // OpenAI applies the mask to the FIRST image, so the source must lead.
-    assert.deepEqual(await imageParts(form), [b64("SRC"), b64("QUFB")]);
-    assert.ok(form.get("mask") instanceof Blob, "the inpaint mask survives the ref append");
+    // The framing clause says "the final N images", so the source must lead or
+    // it would be read as one of the style references.
+    assert.deepEqual(await imageParts(form), [canonicalBase64("SRC"), canonicalBase64("QUFB")]);
     assert.match(textField(form, "prompt"), /The final image is a STYLE REFERENCE/);
   });
+
+  for (const mode of ["inpaint", "outpaint"] as const) {
+    it(`drops refs on a masked ${mode} rather than risk the output size shifting`, async () => {
+      const { fetchImpl, calls } = openaiStub({ data: [{ b64_json: "OUT" }] });
+      const openai = createOpenAIProvider({ fetchImpl });
+      const mask = whiteOnBlackMask([
+        [1, 0],
+        [0, 0],
+      ]);
+
+      await openai.edit!(editReq({ mode, mask, styleRefs: [REF_A, REF_B] }), ctxWith());
+
+      const form = calls[0]!.body as FormData;
+      // A masked edit omits `size`, so the output rides on OpenAI's "auto".
+      // Extra inputs of differing dimensions could move where auto lands, which
+      // would slide the preserved region out of alignment with the mask — so the
+      // masked path stays single-image and falls back to the text descriptor.
+      assert.deepEqual(await imageParts(form), [canonicalBase64("SRC")]);
+      assert.equal(form.getAll("image[]").length, 0, "masked edits stay single-image");
+      assert.ok(form.get("mask") instanceof Blob, `${mode} must still send its mask`);
+      assert.equal(
+        textField(form, "prompt"),
+        "make it blue",
+        "no framing clause when no refs were sent",
+      );
+    });
+  }
 
   it("reserves a slot for the source when capping refs", async () => {
     const { fetchImpl, calls } = openaiStub({ data: [{ b64_json: "OUT" }] });
