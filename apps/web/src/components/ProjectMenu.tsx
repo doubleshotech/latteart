@@ -59,9 +59,9 @@ const accentBtn: React.CSSProperties = {
 };
 const dangerBtn: React.CSSProperties = {
   ...btnBase,
-  background: "#f0616d",
-  border: "1px solid #f0616d",
-  color: "#1a0507",
+  background: "var(--danger)",
+  border: "1px solid var(--danger)",
+  color: "var(--danger-fg)",
 };
 /** The shared dialog chrome sizes for the big Settings modal; these are small. */
 const smallDialog: React.CSSProperties = { width: 380, padding: 18 };
@@ -115,12 +115,22 @@ export function ProjectMenu() {
     }
   };
 
+  // Anything that closes the open document is unsafe mid-generation: the job
+  // lands on whatever layers exist when it finishes. The store enforces this
+  // too; here it's about telling the user why the item is dim.
   const blocked = busy || switching;
   const blockedNote = busy
     ? "Wait for the current generation to finish"
     : switching
       ? "Switching…"
       : undefined;
+  /** Shared props for every menu item that closes the open document. */
+  const blockedItem = {
+    disabled: blocked,
+    title: blockedNote,
+    style: { opacity: blocked ? 0.5 : 1 },
+  };
+  const blockedItemStyle = blockedItem.style;
 
   return (
     <>
@@ -225,10 +235,8 @@ export function ProjectMenu() {
 
             <DropdownMenu.Item
               className="dd-item"
-              disabled={blocked}
-              title={blockedNote}
+              {...blockedItem}
               onSelect={() => void guard("create", () => createProject("Untitled"))}
-              style={{ opacity: blocked ? 0.5 : 1 }}
             >
               <Plus size={14} strokeWidth={1.8} />
               New project
@@ -250,10 +258,8 @@ export function ProjectMenu() {
 
             <DropdownMenu.Item
               className="dd-item"
-              disabled={blocked}
-              title={blockedNote}
+              {...blockedItem}
               onSelect={() => void guard("duplicate", () => duplicateProject(id))}
-              style={{ opacity: blocked ? 0.5 : 1 }}
             >
               <Copy size={14} strokeWidth={1.8} />
               Duplicate
@@ -261,10 +267,9 @@ export function ProjectMenu() {
 
             <DropdownMenu.Item
               className="dd-item"
-              disabled={blocked}
-              title={blockedNote}
+              {...blockedItem}
               onSelect={() => setTimeout(() => setConfirmDelete(true), 0)}
-              style={{ color: "#f0616d", opacity: blocked ? 0.5 : 1 }}
+              style={{ ...blockedItemStyle, color: "var(--danger)" }}
             >
               <Trash2 size={14} strokeWidth={1.8} />
               Delete…
@@ -342,7 +347,12 @@ export function ProjectMenu() {
               </Dialog.Close>
               <button
                 type="button"
-                style={dangerBtn}
+                // Re-checked here, not just on the menu item: a generation can
+                // start while this dialog sits open, and the store would then
+                // silently refuse, leaving the project apparently undeleted.
+                disabled={blocked}
+                title={blockedNote}
+                style={{ ...dangerBtn, opacity: blocked ? 0.5 : 1 }}
                 onClick={() => {
                   setConfirmDelete(false);
                   void guard("delete", () => deleteProject(id));

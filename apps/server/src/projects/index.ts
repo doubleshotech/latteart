@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import type { ProjectDoc, ProjectLayer, ProjectSummary } from "@latteart/shared";
+import type { ProjectDoc, ProjectLayer, ProjectSession, ProjectSummary } from "@latteart/shared";
 import { assetRefFile, readAsset, writeAsset } from "../assets.ts";
 import { DATA_DIR } from "../paths.ts";
 
@@ -30,13 +30,6 @@ import { DATA_DIR } from "../paths.ts";
 const PROJECTS_DIR = join(DATA_DIR, "projects");
 
 /**
- * The project the very first session lands in, and the id every pre-switcher
- * project already uses on disk — so an existing install just finds its work as
- * the first entry in the list, with no migration.
- */
-export const DEFAULT_PROJECT_ID = "default";
-
-/**
  * Ids become directory names, so they must not traverse or collide with the
  * manifest. Generated ids are uuids; this guards the ones that arrive from the
  * client as a path segment.
@@ -49,8 +42,37 @@ function projectDir(id: string): string {
   return join(PROJECTS_DIR, id);
 }
 
-/** An empty document, used for a brand-new project. */
-function emptyDoc(id: string, name: string): ProjectDoc {
+/**
+ * Write a manifest atomically (tmp + rename), so a crash mid-write can't leave
+ * a half-written project.json where a whole project used to be. Every writer
+ * goes through here — the same rule the style store follows.
+ */
+function writeManifest(id: string, doc: ProjectDoc): void {
+  const dir = projectDir(id);
+  const tmpPath = join(dir, "project.json.tmp");
+  writeFileSync(tmpPath, JSON.stringify(doc, null, 2), { mode: 0o600 });
+  renameSync(tmpPath, join(dir, "project.json"));
+}
+
+/** Rehydrate a manifest's `asset:` thumbnail ref to a data: URL. */
+function readThumbnail(assetsDir: string, ref: string | null | undefined): string | null {
+  return typeof ref === "string" ? (readAsset(assetsDir, ref) ?? null) : null;
+}
+
+/** Fallback session for a new project when the caller doesn't supply one. */
+const FALLBACK_SESSION: ProjectSession = {
+  providerId: "mock",
+  model: null,
+  size: { w: 1024, h: 1024, label: "Square" },
+  styleId: "none",
+};
+
+/**
+ * An empty document for a brand-new project. The caller passes its current
+ * session so "New project" doesn't silently reset the provider, model and
+ * output size the user already chose — a new canvas, not a new setup.
+ */
+function emptyDoc(id: string, name: string, session?: ProjectSession): ProjectDoc {
   const now = Date.now();
   return {
     version: 1,
@@ -60,12 +82,7 @@ function emptyDoc(id: string, name: string): ProjectDoc {
     updatedAt: now,
     layers: [],
     viewport: { scale: 1, x: 0, y: 0 },
-    session: {
-      providerId: "mock",
-      model: null,
-      size: { w: 1024, h: 1024, label: "Square" },
-      styleId: "none",
-    },
+    session: session ?? FALLBACK_SESSION,
     thumbnail: null,
   };
 }
@@ -125,10 +142,7 @@ export function saveProject(id: string, incoming: ProjectDoc): ProjectDoc {
     thumbnail,
   };
 
-  const manifestPath = join(dir, "project.json");
-  const tmpPath = join(dir, "project.json.tmp");
-  writeFileSync(tmpPath, JSON.stringify(doc, null, 2), { mode: 0o600 });
-  renameSync(tmpPath, manifestPath);
+  writeManifest(id, doc);
 
   // Prune assets the new manifest no longer references (old layer versions,
   // superseded thumbnails).
@@ -169,12 +183,7 @@ export function loadProject(id: string): ProjectDoc | null {
     src: typeof l.src === "string" ? (readAsset(assetsDir, l.src) ?? null) : null,
   }));
 
-  return {
-    ...doc,
-    layers,
-    thumbnail:
-      typeof doc.thumbnail === "string" ? (readAsset(assetsDir, doc.thumbnail) ?? null) : null,
-  };
+  return { ...doc, layers, thumbnail: readThumbnail(assetsDir, doc.thumbnail) };
 }
 
 /**
@@ -199,21 +208,18 @@ export function listProjects(): ProjectSummary[] {
       createdAt: doc.createdAt,
       updatedAt: doc.updatedAt,
       layerCount: doc.layers.length,
-      thumbnail:
-        typeof doc.thumbnail === "string" ? (readAsset(assetsDir, doc.thumbnail) ?? null) : null,
+      thumbnail: readThumbnail(assetsDir, doc.thumbnail),
     });
   }
   return summaries.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 /** Create an empty project under a fresh id and return its manifest. */
-export function createProject(name?: string): ProjectDoc {
+export function createProject(name?: string, session?: ProjectSession): ProjectDoc {
   const id = randomUUID();
-  const doc = emptyDoc(id, name?.trim() || "Untitled");
+  const doc = emptyDoc(id, name?.trim() || "Untitled", session);
   mkdirSync(join(projectDir(id), "assets"), { recursive: true, mode: 0o700 });
-  writeFileSync(join(projectDir(id), "project.json"), JSON.stringify(doc, null, 2), {
-    mode: 0o600,
-  });
+  writeManifest(id, doc);
   return doc;
 }
 
@@ -222,9 +228,7 @@ export function renameProject(id: string, name: string): ProjectDoc | null {
   const doc = readManifest(id);
   if (!doc) return null;
   const renamed: ProjectDoc = { ...doc, name: name.trim() || "Untitled", updatedAt: Date.now() };
-  writeFileSync(join(projectDir(id), "project.json"), JSON.stringify(renamed, null, 2), {
-    mode: 0o600,
-  });
+  writeManifest(id, renamed);
   return renamed;
 }
 
@@ -257,7 +261,7 @@ export function duplicateProject(id: string, name?: string): ProjectDoc | null {
     createdAt: now,
     updatedAt: now,
   };
-  writeFileSync(join(newDir, "project.json"), JSON.stringify(copy, null, 2), { mode: 0o600 });
+  writeManifest(newId, copy);
   return copy;
 }
 

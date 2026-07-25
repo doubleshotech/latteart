@@ -16,6 +16,7 @@ import type {
   LLMProviderDescriptor,
   ProgressEvent,
   ProjectDoc,
+  ProjectSession,
   ProviderContext,
   StyleFragment,
   UpscaleRequest,
@@ -64,6 +65,16 @@ function resolveStyle(
   const preset = stylePreset(styleId);
   if (preset) return { fragment: preset, refs: [] };
   return resolveCustomStyle(styleId, styleId.startsWith("custom:") && entry.capabilities.styleRef);
+}
+
+/**
+ * The `:id` path segment, or null when it isn't a usable project id. Ids become
+ * directory names, so every /api/projects/:id route validates before touching
+ * disk; returning null keeps that check to one line at each call site.
+ */
+function projectId(c: Context): string | null {
+  const id = c.req.param("id");
+  return typeof id === "string" && isValidProjectId(id) ? id : null;
 }
 
 /**
@@ -189,22 +200,26 @@ const routes = app
   .get("/api/projects", (c) => c.json(listProjects()))
 
   .post("/api/projects", async (c) => {
-    const body = await c.req.json<{ name?: string }>().catch(() => ({}) as { name?: string });
-    return c.json(createProject(body.name), 201);
+    const body = await c.req
+      .json<{ name?: string; session?: ProjectSession }>()
+      .catch(() => ({}) as { name?: string; session?: ProjectSession });
+    // The client passes its live session so a new project inherits the provider,
+    // model and size already in use rather than resetting them.
+    return c.json(createProject(body.name, body.session), 201);
   })
 
   // Per-project persistence. GET rehydrates layer images to data: URLs; PUT is
   // the autosave sink — the whole document each time, pixels split out to
   // content-hashed asset files on disk.
   .get("/api/projects/:id", (c) => {
-    const id = c.req.param("id");
-    if (!isValidProjectId(id)) return c.json({ error: "invalid project id" }, 400);
+    const id = projectId(c);
+    if (!id) return c.json({ error: "invalid project id" }, 400);
     return c.json(loadProject(id));
   })
 
   .put("/api/projects/:id", async (c) => {
-    const id = c.req.param("id");
-    if (!isValidProjectId(id)) return c.json({ error: "invalid project id" }, 400);
+    const id = projectId(c);
+    if (!id) return c.json({ error: "invalid project id" }, 400);
     const body = await c.req.json<ProjectDoc>().catch(() => null);
     if (
       !body ||
@@ -220,8 +235,8 @@ const routes = app
   })
 
   .patch("/api/projects/:id", async (c) => {
-    const id = c.req.param("id");
-    if (!isValidProjectId(id)) return c.json({ error: "invalid project id" }, 400);
+    const id = projectId(c);
+    if (!id) return c.json({ error: "invalid project id" }, 400);
     const body = await c.req.json<{ name?: string }>().catch(() => null);
     if (!body || typeof body.name !== "string") return c.json({ error: "expected a name" }, 400);
     const renamed = renameProject(id, body.name);
@@ -230,8 +245,8 @@ const routes = app
   })
 
   .post("/api/projects/:id/duplicate", async (c) => {
-    const id = c.req.param("id");
-    if (!isValidProjectId(id)) return c.json({ error: "invalid project id" }, 400);
+    const id = projectId(c);
+    if (!id) return c.json({ error: "invalid project id" }, 400);
     const body = await c.req.json<{ name?: string }>().catch(() => ({}) as { name?: string });
     const copy = duplicateProject(id, body.name);
     if (!copy) return c.json({ error: "no such project" }, 404);
@@ -239,8 +254,8 @@ const routes = app
   })
 
   .delete("/api/projects/:id", (c) => {
-    const id = c.req.param("id");
-    if (!isValidProjectId(id)) return c.json({ error: "invalid project id" }, 400);
+    const id = projectId(c);
+    if (!id) return c.json({ error: "invalid project id" }, 400);
     if (!deleteProject(id)) return c.json({ error: "no such project" }, 404);
     return c.json({ ok: true });
   })

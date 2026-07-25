@@ -113,6 +113,8 @@ let timer: number | null = null;
 /** changeKey() of what's persisted on disk (or the just-loaded doc). */
 let savedKey = "";
 let inFlight = false;
+/** Resolves when the save currently on the wire settles; null when idle. */
+let inFlightPromise: Promise<void> | null = null;
 let pendingAgain = false;
 
 /**
@@ -173,6 +175,10 @@ async function flush() {
   }
 
   const doc = snapshot();
+  let settle = () => {};
+  inFlightPromise = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
   // Pin the target: `await`s below let a switch land mid-save, and the id in
   // the store would then point at the *new* project. Everything after this
   // line refers to the project this body actually serialized.
@@ -204,11 +210,29 @@ async function flush() {
     }
   } finally {
     inFlight = false;
+    inFlightPromise = null;
+    settle();
     if (pendingAgain) {
       pendingAgain = false;
       schedule();
     }
   }
+}
+
+/**
+ * Persist everything pending and wait for it to actually land — what a switch
+ * needs, and what `flush()` alone does not give you: `flush()` returns
+ * immediately when a save is already on the wire, and that save is holding an
+ * older snapshot. Waiting it out and then flushing again is what saves the
+ * edits made while it was in flight.
+ */
+async function saveNow(): Promise<void> {
+  if (timer !== null) {
+    window.clearTimeout(timer);
+    timer = null;
+  }
+  while (inFlightPromise) await inFlightPromise;
+  await flush();
 }
 
 /**
@@ -284,30 +308,33 @@ export async function initProjectSync(): Promise<void> {
  * deleted from another tab (or a wiped .data dir) falls through to the list.
  */
 async function resolveBootProject(): Promise<ProjectDoc | null> {
-  const list = await fetchProjects();
+  // Throwing rather than falling back matters here: `fetchProjects()` swallows
+  // failures and returns the cached list, which at boot is empty — and an empty
+  // list is the signal to create a project. A transient 500 must not read as
+  // "no projects yet" and strand the user in a blank one. The caller treats a
+  // throw as "server state unknown", retries, and never arms autosave.
+  const res = await fetch("/api/projects");
+  if (!res.ok) throw new Error(`could not list projects (${res.status})`);
+  const list = (await res.json()) as ProjectSummary[];
+  useProject.setState({ projects: list });
 
+  // Prefer the project this browser had open, then fall back through the rest
+  // newest-first — a stale stored id or one unreadable project shouldn't block
+  // boot while other projects are perfectly loadable.
   const wanted = lastProjectId();
-  const candidates = [
+  const ordered = [
     ...(wanted && list.some((p) => p.id === wanted) ? [wanted] : []),
-    ...(list[0] ? [list[0].id] : []),
+    ...list.map((p) => p.id).filter((pid) => pid !== wanted),
   ];
-  for (const id of candidates) {
-    const res = await fetch(`/api/projects/${id}`);
-    if (!res.ok) continue;
-    const doc = (await res.json()) as ProjectDoc | null;
+  for (const id of ordered) {
+    const one = await fetch(`/api/projects/${id}`);
+    if (!one.ok) continue;
+    const doc = (await one.json()) as ProjectDoc | null;
     if (doc) return doc;
   }
 
-  // Nothing on disk yet — first run.
-  if (list.length === 0) {
-    const res = await fetch("/api/projects", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "Untitled" }),
-    });
-    if (res.ok) return (await res.json()) as ProjectDoc;
-  }
-  return null;
+  // Genuinely nothing readable on disk — first run.
+  return createRemote("Untitled");
 }
 
 async function loadThenArm(): Promise<void> {
@@ -371,27 +398,29 @@ export async function fetchProjects(): Promise<ProjectSummary[]> {
  * and are reset, or the first edit in the new project would either resurrect
  * the old one's layers or be mistaken for "nothing changed".
  */
-export async function switchProject(id: string): Promise<void> {
-  const current = useProject.getState();
-  if (id === current.id || current.switching) return;
-  // A running job owns the document — it will drop its result onto whatever
-  // layers exist when it lands. Same reason `busy` gates undo/redo. The menu
-  // disables switching too; this is the backstop.
-  if (useGeneration.getState().busy) return;
-
+/**
+ * Load `id` into the stores and make it the open project.
+ *
+ * `saveOutgoing` is false only when the outgoing project no longer exists (it
+ * was just deleted) — saving then would recreate the directory we just removed.
+ */
+async function openProject(id: string, opts: { saveOutgoing: boolean }): Promise<void> {
   useProject.setState({ switching: true });
   try {
-    if (timer !== null) {
-      window.clearTimeout(timer);
-      timer = null;
-    }
-    await flush(); // persist the outgoing project before letting go of it
+    if (opts.saveOutgoing) await saveNow();
 
     const res = await fetch(`/api/projects/${id}`);
     if (!res.ok) throw new Error(`could not open project (${res.status})`);
     const doc = (await res.json()) as ProjectDoc | null;
     if (!doc) throw new Error("project not found");
 
+    // Drop anything the outgoing document scheduled while we were awaiting —
+    // hydrate is about to rebaseline savedKey, which would turn that pending
+    // save into a silent no-op against the wrong document.
+    if (timer !== null) {
+      window.clearTimeout(timer);
+      timer = null;
+    }
     resetHistory();
     hydrate(doc, { force: true });
     rememberProject(doc.id);
@@ -403,16 +432,53 @@ export async function switchProject(id: string): Promise<void> {
   }
 }
 
-/** Create a project and open it. */
-export async function createProject(name?: string): Promise<void> {
+/** Open another project, saving the current one first. */
+export async function switchProject(id: string): Promise<void> {
+  if (!canLeaveProject() || id === useProject.getState().id) return;
+  await openProject(id, { saveOutgoing: true });
+}
+
+/**
+ * Whether it's safe to close the open document. A running job owns it — the
+ * result lands on whatever layers exist when it finishes — which is the same
+ * reason `busy` gates undo/redo. The menu disables these actions too; this is
+ * the backstop for every entry point.
+ */
+function canLeaveProject(): boolean {
+  return !useGeneration.getState().busy && !useProject.getState().switching;
+}
+
+/**
+ * Ask the server for a fresh project. The current session rides along so a new
+ * project inherits the provider, model and size already in use — a new canvas,
+ * not a new setup.
+ */
+async function createRemote(name?: string): Promise<ProjectDoc> {
+  const s = useSession.getState();
   const res = await fetch("/api/projects", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({
+      name,
+      session: {
+        providerId: s.providerId,
+        model: s.model,
+        size: { w: s.size.w, h: s.size.h, label: s.size.label },
+        styleId: s.styleId,
+        isolate: s.isolate,
+        llmProviderId: s.llmProviderId,
+      },
+    }),
   });
   if (!res.ok) throw new Error("could not create the project");
-  const doc = (await res.json()) as ProjectDoc;
-  await switchProject(doc.id);
+  return (await res.json()) as ProjectDoc;
+}
+
+/** Create a project and open it. */
+export async function createProject(name?: string): Promise<void> {
+  if (!canLeaveProject()) return;
+  const doc = await createRemote(name);
+  await openProject(doc.id, { saveOutgoing: true });
 }
 
 /** Rename a project. Renaming the open one updates the topbar in place. */
@@ -435,7 +501,9 @@ export async function renameProject(id: string, name: string): Promise<void> {
 
 /** Copy a project (pixels and all) and open the copy. */
 export async function duplicateProject(id: string): Promise<void> {
-  if (id === useProject.getState().id) await flush(); // copy the latest state
+  if (!canLeaveProject()) return;
+  // Copy the latest state, not the last autosave.
+  if (id === useProject.getState().id) await saveNow();
   const res = await fetch(`/api/projects/${id}/duplicate`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -443,14 +511,15 @@ export async function duplicateProject(id: string): Promise<void> {
   });
   if (!res.ok) throw new Error("could not duplicate the project");
   const doc = (await res.json()) as ProjectDoc;
-  await switchProject(doc.id);
+  await openProject(doc.id, { saveOutgoing: true });
 }
 
 /**
  * Delete a project. Deleting the open one moves to the next most recent, or to
- * a fresh project when it was the last one — the studio always has a document.
+ * a fresh project when it was the last — the studio always has a document.
  */
 export async function deleteProject(id: string): Promise<void> {
+  if (!canLeaveProject()) return;
   const wasOpen = useProject.getState().id === id;
   const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error("could not delete the project");
@@ -460,22 +529,20 @@ export async function deleteProject(id: string): Promise<void> {
     return;
   }
 
-  // The open project is gone; nothing left to save from it.
+  // The open project is gone. Cancel its pending save and re-baseline, or the
+  // debounce would PUT it straight back and recreate the directory.
   if (timer !== null) {
     window.clearTimeout(timer);
     timer = null;
   }
   savedKey = changeKey();
 
+  // Hand over to a successor without saving the outgoing (deleted) project.
+  // Note the id stays pointed at the deleted project until this succeeds: if
+  // opening fails, the canvas still shows its layers and a later edit would
+  // recreate it — recoverable, unlike being left with no project at all.
   const list = await fetchProjects();
   const next = list.find((p) => p.id !== id);
-  if (next) {
-    // switchProject would try to save the deleted project first, so clear the
-    // id to make the pending-save check a no-op before handing over.
-    useProject.setState({ id: "" });
-    await switchProject(next.id);
-  } else {
-    useProject.setState({ id: "" });
-    await createProject("Untitled");
-  }
+  const successor = next ? next.id : (await createRemote("Untitled")).id;
+  await openProject(successor, { saveOutgoing: false });
 }
