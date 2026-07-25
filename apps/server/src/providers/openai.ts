@@ -1,5 +1,6 @@
 import { PNG } from "pngjs";
 import { noCapabilities } from "@latteart/shared";
+import { withStyleRefInstruction } from "./styleRef.ts";
 import type {
   EditRequest,
   GenResult,
@@ -16,12 +17,21 @@ import type {
  * straight onto the canvas as a data URL.
  *
  * v1 covers text-to-image (`/images/generations`), whole-image edits, and
- * masked inpaint (both via `/images/edits`). See openai.test.ts — verified
- * against the documented contract via fixtures only, not yet live-smoked.
+ * masked inpaint (both via `/images/edits`). v2 adds native style-reference
+ * conditioning for custom styles (see `styleRefForm` below). See openai.test.ts
+ * — verified against the documented contract via fixtures only, not live-smoked.
  */
 
 const BASE = "https://api.openai.com/v1";
 const DEFAULT_MODEL = "gpt-image-1";
+
+/**
+ * `/images/edits` accepts at most 16 input images, and the source image being
+ * edited counts toward that budget. Extra style refs are dropped rather than
+ * failing the whole request — a style conditioned on 15 of its 20 references is
+ * still the style the user asked for.
+ */
+const MAX_INPUT_IMAGES = 16;
 
 /** Sizes gpt-image-1 accepts, with their aspect ratios for nearest-match. */
 const OPENAI_SIZES = [
@@ -62,6 +72,53 @@ function extFor(mime: string): string {
   if (/jpe?g/.test(mime)) return "jpg";
   if (/webp/.test(mime)) return "webp";
   return "png";
+}
+
+/**
+ * Append one decoded image to a multipart form under `field`.
+ *
+ * The Blob wraps a plain Uint8Array: a Node Buffer's type is
+ * Buffer<ArrayBufferLike>, which the DOM lib's BlobPart (backed by a strict
+ * ArrayBuffer) rejects.
+ */
+function appendImage(
+  form: FormData,
+  field: string,
+  image: { mime: string; bytes: Buffer },
+  filename: string,
+): void {
+  form.append(field, new Blob([new Uint8Array(image.bytes)], { type: image.mime }), filename);
+}
+
+/**
+ * Decode a custom style's reference images, dropping any that aren't base64
+ * `data:` URLs and trimming to the input-image budget left over after the
+ * caller's own images (1 for an edit's source, 0 for a generation).
+ */
+function decodeStyleRefs(
+  styleRefs: string[] | undefined,
+  reservedSlots: number,
+): { mime: string; bytes: Buffer }[] {
+  if (!styleRefs?.length) return [];
+  return styleRefs
+    .map(parseDataUrl)
+    .filter((r): r is { mime: string; bytes: Buffer } => r !== null)
+    .slice(0, Math.max(0, MAX_INPUT_IMAGES - reservedSlots));
+}
+
+/**
+ * Append `images` to the form as OpenAI's multi-image input.
+ *
+ * The field name is positional-array syntax (`image[]`, repeated once per file)
+ * whenever there is more than one image — that's the form OpenAI's own curl
+ * examples use, and it's what preserves order. A lone image keeps the plain
+ * `image` field, matching the single-image path that shipped in v1.
+ */
+function appendImages(form: FormData, images: { mime: string; bytes: Buffer }[]): void {
+  const field = images.length > 1 ? "image[]" : "image";
+  images.forEach((img, i) => {
+    appendImage(form, field, img, `image-${i}.${extFor(img.mime)}`);
+  });
 }
 
 /**
@@ -127,12 +184,16 @@ export function createOpenAIProvider(opts: OpenAIOptions = {}): ImageProvider {
     label: "OpenAI",
     kind: "cloud",
     requiresKey: true,
+    // styleRef: gpt-image-1 has no image input on /images/generations, so
+    // txt2img conditions on a custom style's pixels by detouring through
+    // /images/edits with the refs as input images (see generate()).
     capabilities: {
       ...noCapabilities(),
       txt2img: true,
       img2img: true,
       inpaint: true,
       outpaint: true,
+      styleRef: true,
     },
 
     async listModels(): Promise<ModelInfo[]> {
@@ -146,20 +207,42 @@ export function createOpenAIProvider(opts: OpenAIOptions = {}): ImageProvider {
     ): Promise<GenResult> {
       if (!ctx.apiKey) throw missingKey();
       const model = req.model?.trim() || DEFAULT_MODEL;
+      const prompt = foldNegative(req.prompt, req.negativePrompt);
+      const size = nearestSize(req.width, req.height);
+      // Custom styles v2: `/images/generations` takes no image input at all, so
+      // a text-to-image *conditioned on reference pixels* has to detour through
+      // `/images/edits` with the refs as the input images and no mask — the
+      // model then paints a new scene rather than editing one. Unlike a true
+      // edit we DO pin `size`: there's no source whose alignment we'd disturb,
+      // and omitting it would let the output follow the reference's aspect
+      // instead of the size the user picked.
+      const refs = decodeStyleRefs(req.styleRefs, 0);
 
       ctx.onProgress?.(15);
-      const res = await fetchImpl(`${BASE}/images/generations`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${ctx.apiKey}`, "content-type": "application/json" },
-        body: JSON.stringify({
-          model,
-          prompt: foldNegative(req.prompt, req.negativePrompt),
-          size: nearestSize(req.width, req.height),
-          n: 1,
-          output_format: "png",
-        }),
-        signal,
-      });
+      let res: Response;
+      if (refs.length > 0) {
+        const form = new FormData();
+        form.append("model", model);
+        form.append("prompt", withStyleRefInstruction(prompt, refs.length));
+        form.append("n", "1");
+        form.append("output_format", "png");
+        form.append("size", size);
+        appendImages(form, refs);
+        res = await fetchImpl(`${BASE}/images/edits`, {
+          method: "POST",
+          // No content-type — FormData sets the multipart boundary itself.
+          headers: { Authorization: `Bearer ${ctx.apiKey}` },
+          body: form,
+          signal,
+        });
+      } else {
+        res = await fetchImpl(`${BASE}/images/generations`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${ctx.apiKey}`, "content-type": "application/json" },
+          body: JSON.stringify({ model, prompt, size, n: 1, output_format: "png" }),
+          signal,
+        });
+      }
       const b64 = await readImageB64(res);
 
       ctx.onProgress?.(100);
@@ -182,9 +265,19 @@ export function createOpenAIProvider(opts: OpenAIOptions = {}): ImageProvider {
       // /images/edits is multipart: the source image (+ an optional mask for
       // inpaint) plus the instruction. gpt-image-1 edits the whole image from
       // the prompt when there's no mask.
+      //
+      // Custom styles v2: any style refs trail the source image, which is what
+      // makes the arrangement safe on two counts — the framing clause says "the
+      // final N images", so it points at the refs and not the thing being
+      // edited, and OpenAI documents that with multiple images "the mask will be
+      // applied on the first image", so inpaint/outpaint keep masking the source.
+      const refs = decodeStyleRefs(req.styleRefs, 1);
       const form = new FormData();
       form.append("model", model);
-      form.append("prompt", foldNegative(req.prompt, req.negativePrompt));
+      form.append(
+        "prompt",
+        withStyleRefInstruction(foldNegative(req.prompt, req.negativePrompt), refs.length),
+      );
       form.append("n", "1");
       form.append("output_format", "png");
       // No `size`: forcing one resamples the whole output and breaks inpaint's
@@ -196,24 +289,14 @@ export function createOpenAIProvider(opts: OpenAIOptions = {}): ImageProvider {
       // three sizes; if "auto" resamples it, the preserved original would shift
       // out of alignment with the layer's on-canvas box. The offline mock is
       // unaffected (it honors any size), so outpaint verifies end-to-end there.
-      form.append(
-        "image",
-        // Wrap in a plain Uint8Array: a Node Buffer's type is Buffer<ArrayBufferLike>,
-        // which the DOM lib's BlobPart (backed by a strict ArrayBuffer) rejects.
-        new Blob([new Uint8Array(source.bytes)], { type: source.mime }),
-        `image.${extFor(source.mime)}`,
-      );
+      appendImages(form, [source, ...refs]);
       // Masked edit: only the transparent-in-the-mask region is regenerated.
       // Inpaint marks a painted region; outpaint marks the transparent padding
       // around a source placed on an expanded canvas — the same masked-fill call
       // to gpt-image-1, so both extend the image coherently. Without a mask,
       // gpt-image-1 edits the whole image (img2img).
       if ((req.mode === "inpaint" || req.mode === "outpaint") && req.mask) {
-        form.append(
-          "mask",
-          new Blob([new Uint8Array(toOpenAIMask(req.mask))], { type: "image/png" }),
-          "mask.png",
-        );
+        appendImage(form, "mask", { mime: "image/png", bytes: toOpenAIMask(req.mask) }, "mask.png");
       }
 
       ctx.onProgress?.(15);

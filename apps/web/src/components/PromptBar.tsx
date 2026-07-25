@@ -362,8 +362,9 @@ export function PromptBar() {
         "Style");
   const styleActive = activeStyleLabel !== "Style";
   // Custom styles v2: a "ref" badge when the selected style is a custom one AND
-  // the active provider conditions on its reference pixels natively (Gemini/mock).
-  // Presets and native-less providers fall back to the composed text descriptor.
+  // the active provider conditions on its reference pixels natively (Gemini,
+  // OpenAI, mock). Presets and native-less providers (Fal, ComfyUI) fall back to
+  // the composed text descriptor.
   const nativeStyleRef = styleId.startsWith("custom:") && !!active?.capabilities.styleRef;
 
   const deleteStyle = (id: string) => {
