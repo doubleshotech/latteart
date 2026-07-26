@@ -31,7 +31,13 @@ export type {
 export type { StylePreset, StyleFragment } from "./styles.ts";
 export { STYLE_PRESETS, stylePreset, applyStyle, composeStyle } from "./styles.ts";
 
-export type { ProjectLayer, ProjectViewport, ProjectSession, ProjectDoc } from "./project.ts";
+export type {
+  ProjectLayer,
+  ProjectViewport,
+  ProjectSession,
+  ProjectDoc,
+  ProjectSummary,
+} from "./project.ts";
 
 /** Helper: build a full capability set with everything off by default. */
 export function noCapabilities(): import("./types.ts").ModelCapabilities {

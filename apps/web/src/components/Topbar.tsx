@@ -1,6 +1,7 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { ChevronDown, Download, Settings, Sparkles } from "lucide-react";
 import { LogoMark } from "./LogoMark";
+import { ProjectMenu } from "./ProjectMenu";
 import { flattenLayers } from "../lib/flatten";
 import { useDocument } from "../stores/documentStore";
 import { useGeneration } from "../stores/generationStore";
@@ -67,9 +68,11 @@ export function Topbar() {
         zIndex: 6,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
         <LogoMark />
         <span style={{ fontSize: 13.5, fontWeight: 600, letterSpacing: "-.01em" }}>latteart</span>
+        <span style={{ color: "var(--text-faint)", fontSize: 13 }}>/</span>
+        <ProjectMenu />
         {SAVE_LABELS[saveStatus] && (
           <span
             style={{
