@@ -8,6 +8,8 @@
  * manifest instead — project.json never embeds base64.
  */
 
+import type { BlendMode } from "./blend.ts";
+
 /** A saved layer — the editor's Layer minus transient state (status/progress). */
 export interface ProjectLayer {
   id: string;
@@ -25,6 +27,11 @@ export interface ProjectLayer {
   prompt: string | null;
   /** Provenance for layers produced by an editor action. */
   derivedFrom: { id: string; name: string } | null;
+  /**
+   * How this layer composites onto the layers below. Optional so projects
+   * saved before blend modes existed still load — absent reads as "normal".
+   */
+  blendMode?: BlendMode;
 }
 
 export interface ProjectViewport {

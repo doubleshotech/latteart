@@ -647,9 +647,7 @@ export function PromptBar() {
                 </DropdownMenu.Item>
               ))}
 
-              <DropdownMenu.Separator
-                style={{ height: 1, background: "var(--border)", margin: "6px 0" }}
-              />
+              <DropdownMenu.Separator className="dd-sep" />
 
               {STYLE_PRESETS.map((s) => (
                 <DropdownMenu.Item

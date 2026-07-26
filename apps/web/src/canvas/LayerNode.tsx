@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Group, Image as KonvaImage, Rect } from "react-konva";
 import type Konva from "konva";
 import type { KonvaEventObject } from "konva/lib/Node";
+import { compositeOperation, isBlended } from "@latteart/shared";
 import { useImage } from "../lib/useImage";
 import { useHasAlpha } from "../lib/useHasAlpha";
 import { checkerPattern } from "../lib/checkerboard";
@@ -45,11 +46,19 @@ export function LayerNode({
 
   if (!layer.visible) return null;
 
+  // A blended layer must composite against the real stack beneath it, so both
+  // pieces of canvas chrome step aside when the mode isn't Normal:
+  //   - the checkerboard would put opaque pixels under the layer, so the blend
+  //     would resolve against the chrome instead of the layers below;
+  //   - the drop shadow would be blended too (multiply smears a dark halo over
+  //     the layers under it), and neither flatten nor export draws shadows.
+  const blended = isBlended(layer.blendMode);
+
   // Back a transparent layer with a checkerboard while it's selected, so its
   // cut-out areas read as transparency. Left off when unselected: this is a
   // free multi-layer canvas, so an always-on backing would occlude whatever
   // sits beneath the layer instead of compositing through it.
-  const showChecker = hasAlpha && selected;
+  const showChecker = hasAlpha && selected && !blended;
 
   return (
     <Group
@@ -89,15 +98,19 @@ export function LayerNode({
           listening={false}
         />
       )}
+      {/* The blend mode rides on the image, not the Group: a Group value would
+          apply to the checkerboard Rect too, blending the chrome into the stack
+          rather than letting the image blend against what's beneath it. */}
       <KonvaImage
         image={img ?? undefined}
         width={layer.width}
         height={layer.height}
         opacity={layer.opacity}
+        globalCompositeOperation={compositeOperation(layer.blendMode)}
         cornerRadius={CORNER}
         shadowColor="#000000"
         shadowBlur={26}
-        shadowOpacity={0.5}
+        shadowOpacity={blended ? 0 : 0.5}
         shadowOffsetY={14}
       />
     </Group>

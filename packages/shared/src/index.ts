@@ -31,6 +31,16 @@ export type {
 export type { StylePreset, StyleFragment } from "./styles.ts";
 export { STYLE_PRESETS, stylePreset, applyStyle, composeStyle } from "./styles.ts";
 
+export type { BlendMode, BlendModeOption } from "./blend.ts";
+export {
+  BLEND_MODES,
+  DEFAULT_BLEND_MODE,
+  compositeOperation,
+  isBlended,
+  isBlendMode,
+  blendLabel,
+} from "./blend.ts";
+
 export type {
   ProjectLayer,
   ProjectViewport,
