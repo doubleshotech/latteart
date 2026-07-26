@@ -52,9 +52,17 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     id: "openai",
     label: "OpenAI",
     kind: "cloud",
-    blurb: "GPT Image 1 · generate, edit, inpaint & outpaint",
+    blurb: "GPT Image 1 · generate, edit, inpaint, outpaint & style refs",
     requiresKey: true,
-    capabilities: caps({ txt2img: true, img2img: true, inpaint: true, outpaint: true }),
+    // styleRef: conditions natively on a custom style's reference pixels by
+    // routing txt2img through /images/edits (v2).
+    capabilities: caps({
+      txt2img: true,
+      img2img: true,
+      inpaint: true,
+      outpaint: true,
+      styleRef: true,
+    }),
     models: [{ id: "gpt-image-1", label: "GPT Image 1" }],
     implemented: true,
     keyPlaceholder: "Paste your OpenAI API key…",

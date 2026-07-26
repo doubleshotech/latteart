@@ -1,4 +1,5 @@
 import { noCapabilities } from "@latteart/shared";
+import { withStyleRefInstruction } from "./styleRef.ts";
 import type {
   EditRequest,
   GenResult,
@@ -87,28 +88,6 @@ function styleRefParts(styleRefs: string[] | undefined) {
     .filter((p): p is { mimeType: string; data: string } => p !== null)
     .map((p) => ({ inlineData: { mimeType: p.mimeType, data: p.data } }));
   return parts.length > 0 ? parts : null;
-}
-
-/**
- * The crux of native conditioning: without this, Gemini treats an extra image as
- * content to blend or edit. This tells it the trailing image(s) are a *style*
- * guide only — emulate the look, don't reproduce the subject. Appended to the
- * generation/edit instruction whenever style refs are present.
- */
-function styleRefInstruction(count: number): string {
-  const subject =
-    count === 1
-      ? "The final image is a STYLE REFERENCE"
-      : `The final ${count} images are STYLE REFERENCES`;
-  const poss = count === 1 ? "its" : "their";
-  const obj = count === 1 ? "it" : "them";
-  return `\n\n${subject}, not content to reproduce. Match ${poss} artistic style — color palette, lighting, texture, brushwork, and overall rendering — while creating the scene described above. Do not copy the subject, objects, or composition of ${obj}.`;
-}
-
-/** Suffix an instruction with the style-only framing when style refs are present
- * — the shared shape used by both generate() and edit(). No-op when there are none. */
-function withStyleRefInstruction(base: string, refParts: unknown[] | null): string {
-  return refParts ? `${base}${styleRefInstruction(refParts.length)}` : base;
 }
 
 /**
@@ -220,7 +199,7 @@ export const geminiProvider: ImageProvider = {
     // Native style conditioning: a custom style's reference pixels ride along as
     // trailing image parts, with the prompt suffixed to mark them style-only.
     const refParts = styleRefParts(req.styleRefs);
-    const text = withStyleRefInstruction(req.prompt, refParts);
+    const text = withStyleRefInstruction(req.prompt, refParts?.length ?? 0);
     const parts: unknown[] = [{ text }, ...(refParts ?? [])];
 
     // Single synchronous call — no step stream, so report coarse progress.
@@ -271,7 +250,7 @@ export const geminiProvider: ImageProvider = {
     // The source image is first (the thing being edited); any style refs trail
     // it, so styleRefInstruction's "final N images" points at the refs, not it.
     const refParts = styleRefParts(req.styleRefs);
-    const instruction = withStyleRefInstruction(base, refParts);
+    const instruction = withStyleRefInstruction(base, refParts?.length ?? 0);
     const parts: unknown[] = [
       { text: instruction },
       { inlineData: { mimeType: source.mimeType, data: source.data } },
