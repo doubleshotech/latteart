@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { DEFAULT_BLEND_MODE, isBlendMode, type BlendMode } from "@latteart/shared";
 import { record } from "./history";
 
 export type LayerStatus = "ready" | "generating";
@@ -7,6 +8,11 @@ export type LayerStatus = "ready" | "generating";
  * A layer is plain serializable data — no Konva objects live here. The canvas
  * derives Konva nodes from this store, which keeps project save/load (Phase 2)
  * a straight JSON dump. Array order is z-order, index 0 = bottom.
+ *
+ * Adding a persisted field means touching three other field lists, each of
+ * which fails *silently* when it goes stale: `snapshot()` and `changeKey()` in
+ * projectStore (a field missing from changeKey never triggers a save) and
+ * `equal()` in history (a field missing there makes undo a silent no-op).
  */
 export interface Layer {
   id: string;
@@ -18,6 +24,8 @@ export interface Layer {
   width: number;
   height: number;
   rotation: number; // degrees
+  /** How this layer composites onto the layers below it. */
+  blendMode: BlendMode;
   src: string | null; // data: URL; null while generating
   status: LayerStatus;
   progress: number; // 0..100 while generating
@@ -41,6 +49,10 @@ export function makeLayer(partial: Partial<Layer>): Layer {
     width: partial.width ?? 320,
     height: partial.height ?? 320,
     rotation: partial.rotation ?? 0,
+    // Guarded rather than defaulted: this is the hydration boundary for layers
+    // read off disk, and an unknown id would render as normal while still
+    // reading as "blended" to the canvas.
+    blendMode: isBlendMode(partial.blendMode) ? partial.blendMode : DEFAULT_BLEND_MODE,
     src: partial.src ?? null,
     status: partial.status ?? "ready",
     progress: partial.progress ?? 0,

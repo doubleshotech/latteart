@@ -1,4 +1,4 @@
-import type { ProjectLayer } from "@latteart/shared";
+import { compositeOperation, type ProjectLayer } from "@latteart/shared";
 
 /**
  * Flatten the canvas to a small preview image for the project switcher's list.
@@ -73,6 +73,7 @@ export async function renderThumbnail(layers: ProjectLayer[]): Promise<string | 
     if (!img) return;
     ctx.save();
     ctx.globalAlpha = l.opacity;
+    ctx.globalCompositeOperation = compositeOperation(l.blendMode);
     // Match the canvas's transform order: translate to the layer's origin,
     // rotate about it, then draw the box — the same basis `corners()` measured.
     ctx.translate((l.x - minX) * scale, (l.y - minY) * scale);

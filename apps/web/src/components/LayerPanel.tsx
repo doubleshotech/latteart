@@ -1,6 +1,18 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Slider from "@radix-ui/react-slider";
-import { Eye, EyeOff, GitBranch, GripVertical, Plus, Sparkles, Trash2 } from "lucide-react";
+import {
+  Blend,
+  ChevronDown,
+  Eye,
+  EyeOff,
+  GitBranch,
+  GripVertical,
+  Plus,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
+import { BLEND_MODES, blendLabel, isBlended } from "@latteart/shared";
 import { cn } from "../lib/utils";
 import { useDocument, type Layer } from "../stores/documentStore";
 import { useGeneration } from "../stores/generationStore";
@@ -58,6 +70,100 @@ function Thumb({ layer }: { layer: Layer }) {
     );
   }
   return <div style={{ ...base, background: "linear-gradient(150deg,#3b1f42,#1b2338)" }} />;
+}
+
+const blendBtn: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  width: "100%",
+  height: 22,
+  padding: "0 5px 0 6px",
+  borderRadius: 6,
+  background: "var(--surface-canvas)",
+  border: "1px solid var(--border)",
+  color: "var(--text)",
+  fontFamily: "inherit",
+  fontSize: 11.5,
+  cursor: "pointer",
+};
+
+/**
+ * Blend-mode picker for the selected layer — the compositing sibling of the
+ * opacity slider it sits above, so both live on the layer they affect (rather
+ * than in the actions dock, which is for AI actions that spawn new layers).
+ */
+function BlendPicker({ layer }: { layer: Layer }) {
+  const updateLayer = useDocument((s) => s.updateLayer);
+  const blended = isBlended(layer.blendMode);
+
+  return (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <button
+          type="button"
+          title="Blend mode — how this layer composites onto the layers below"
+          draggable={false}
+          onMouseDown={(e) => e.stopPropagation()}
+          style={blendBtn}
+        >
+          <Blend
+            size={12}
+            strokeWidth={1.8}
+            color={blended ? "var(--accent)" : "var(--text-faint)"}
+          />
+          <span
+            style={{
+              flex: 1,
+              minWidth: 0,
+              textAlign: "left",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              color: blended ? "var(--text)" : "var(--text-muted)",
+            }}
+          >
+            {blendLabel(layer.blendMode)}
+          </span>
+          <ChevronDown size={12} strokeWidth={1.9} color="var(--text-faint)" />
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          className="dd-content"
+          sideOffset={6}
+          align="start"
+          style={{ minWidth: 176, maxHeight: 360, overflowY: "auto" }}
+        >
+          {BLEND_MODES.map((b, i) => (
+            <Fragment key={b.id}>
+              {/* Section break before each new group. The first group's header
+                  is skipped — it holds Normal alone, which needs no heading. */}
+              {i > 0 && b.group !== BLEND_MODES[i - 1]?.group && (
+                <>
+                  <DropdownMenu.Separator className="dd-sep" />
+                  <DropdownMenu.Label className="dd-label">{b.group}</DropdownMenu.Label>
+                </>
+              )}
+              <DropdownMenu.Item
+                className="dd-item"
+                onSelect={() => updateLayer(layer.id, { blendMode: b.id })}
+              >
+                <span
+                  style={{
+                    color: layer.blendMode === b.id ? "var(--accent)" : "var(--text)",
+                    fontWeight: layer.blendMode === b.id ? 600 : 400,
+                  }}
+                >
+                  {b.label}
+                </span>
+              </DropdownMenu.Item>
+            </Fragment>
+          ))}
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
 }
 
 function LayerRow({ layer }: { layer: Layer }) {
@@ -236,20 +342,25 @@ function LayerRow({ layer }: { layer: Layer }) {
             />
           </div>
         ) : (
-          <Slider.Root
-            className="op-slider"
-            min={0}
-            max={100}
-            step={1}
-            value={[Math.round(layer.opacity * 100)]}
-            onValueChange={([v]) => updateLayer(layer.id, { opacity: (v ?? 100) / 100 })}
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            <Slider.Track className="op-track">
-              <Slider.Range className="op-range" />
-            </Slider.Track>
-            <Slider.Thumb className="op-thumb" aria-label="Opacity" />
-          </Slider.Root>
+          <>
+            {/* Shown for the selected layer, and for any layer already using a
+                non-Normal mode so the setting stays visible when it isn't. */}
+            {(selected || isBlended(layer.blendMode)) && <BlendPicker layer={layer} />}
+            <Slider.Root
+              className="op-slider"
+              min={0}
+              max={100}
+              step={1}
+              value={[Math.round(layer.opacity * 100)]}
+              onValueChange={([v]) => updateLayer(layer.id, { opacity: (v ?? 100) / 100 })}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <Slider.Track className="op-track">
+                <Slider.Range className="op-range" />
+              </Slider.Track>
+              <Slider.Thumb className="op-thumb" aria-label="Opacity" />
+            </Slider.Root>
+          </>
         )}
       </div>
 

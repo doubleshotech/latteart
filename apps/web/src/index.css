@@ -149,6 +149,19 @@ body {
 .dd-item[data-highlighted] {
   background: var(--surface-2);
 }
+.dd-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 5px 3px;
+}
+.dd-label {
+  padding: 6px 9px 3px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
 
 /* Layer panel rows */
 .layer-row {

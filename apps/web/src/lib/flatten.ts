@@ -1,3 +1,4 @@
+import { compositeOperation } from "@latteart/shared";
 import type { Layer } from "../stores/documentStore";
 
 export interface FlatResult {
@@ -10,7 +11,7 @@ export interface FlatResult {
 /**
  * Composite the visible layers (bottom→top = array order) into a single PNG.
  * Pure raster — draws each layer's src at its geometry (position, size, rotation,
- * opacity) onto an offscreen canvas, independent of the current zoom/pan and
+ * opacity, blend mode) onto an offscreen canvas, independent of the current zoom/pan and
  * without the canvas chrome (shadows, selection). Returns the data URL plus the
  * merged bounding box so callers can place the result exactly over the source.
  *
@@ -76,6 +77,7 @@ export async function flattenLayers(
     const img = await load(l.src!);
     ctx.save();
     ctx.globalAlpha = l.opacity;
+    ctx.globalCompositeOperation = compositeOperation(l.blendMode);
     ctx.translate(l.x - minX, l.y - minY);
     ctx.rotate((l.rotation * Math.PI) / 180);
     ctx.drawImage(img, 0, 0, l.width, l.height);

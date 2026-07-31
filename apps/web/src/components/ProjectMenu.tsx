@@ -229,9 +229,7 @@ export function ProjectMenu() {
               ))}
             </div>
 
-            <DropdownMenu.Separator
-              style={{ height: 1, background: "var(--border)", margin: "5px 3px" }}
-            />
+            <DropdownMenu.Separator className="dd-sep" />
 
             <DropdownMenu.Item
               className="dd-item"
