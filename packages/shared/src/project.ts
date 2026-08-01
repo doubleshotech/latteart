@@ -32,6 +32,14 @@ export interface ProjectLayer {
    * saved before blend modes existed still load — absent reads as "normal".
    */
   blendMode?: BlendMode;
+  /**
+   * Non-destructive alpha mask: a grayscale image where white reveals the
+   * layer's pixels and black hides them. Pixels are pixels, so it follows the
+   * same wire-vs-disk split as `src` — a data: URL over the API, an
+   * `asset:<file>` ref on disk. Optional/nullable so projects saved before
+   * masks existed still load (absent = unmasked).
+   */
+  mask?: string | null;
 }
 
 export interface ProjectViewport {

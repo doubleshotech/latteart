@@ -40,6 +40,9 @@ interface SessionState {
   actionView: ActionView | null;
   /** Edit-area (inpaint) mask editor over the canvas, for a given source layer. */
   maskEdit: { sourceId: string } | null;
+  /** Layer-mask editor over the canvas. Distinct from `maskEdit`: that paints a
+   * throwaway region to regenerate, this edits the layer's own alpha mask. */
+  layerMaskEdit: { layerId: string } | null;
   setProvider: (id: string, model?: string | null) => void;
   setModel: (model: string) => void;
   setSize: (s: SizePreset) => void;
@@ -52,6 +55,8 @@ interface SessionState {
   closeAction: () => void;
   openMaskEdit: (sourceId: string) => void;
   closeMaskEdit: () => void;
+  openLayerMaskEdit: (layerId: string) => void;
+  closeLayerMaskEdit: () => void;
 }
 
 export const useSession = create<SessionState>((set) => ({
@@ -64,6 +69,7 @@ export const useSession = create<SessionState>((set) => ({
   settingsOpen: false,
   actionView: null,
   maskEdit: null,
+  layerMaskEdit: null,
   setProvider: (id, model) => set({ providerId: id, model: model ?? null }),
   setModel: (model) => set({ model }),
   setSize: (size) => set({ size }),
@@ -72,8 +78,15 @@ export const useSession = create<SessionState>((set) => ({
   setLLMProvider: (id) => set({ llmProviderId: id }),
   openSettings: () => set({ settingsOpen: true }),
   closeSettings: () => set({ settingsOpen: false }),
-  openAction: (kind, sourceId) => set({ actionView: { kind, sourceId }, maskEdit: null }),
+  // The three editing surfaces are mutually exclusive — two of them draw over
+  // the same canvas, and a drill-in behind an open overlay is unreachable.
+  openAction: (kind, sourceId) =>
+    set({ actionView: { kind, sourceId }, maskEdit: null, layerMaskEdit: null }),
   closeAction: () => set({ actionView: null }),
-  openMaskEdit: (sourceId) => set({ maskEdit: { sourceId }, actionView: null }),
+  openMaskEdit: (sourceId) =>
+    set({ maskEdit: { sourceId }, actionView: null, layerMaskEdit: null }),
   closeMaskEdit: () => set({ maskEdit: null }),
+  openLayerMaskEdit: (layerId) =>
+    set({ layerMaskEdit: { layerId }, actionView: null, maskEdit: null }),
+  closeLayerMaskEdit: () => set({ layerMaskEdit: null }),
 }));

@@ -5,6 +5,7 @@ import { SIZE_PRESETS, useSession } from "./sessionStore";
 import { useViewport } from "./viewportStore";
 import { resetHistory } from "./history";
 import { useGeneration } from "./generationStore";
+import { clearMaskStencils } from "../lib/layerMask";
 import { renderThumbnail } from "../lib/thumbnail";
 
 /**
@@ -82,6 +83,7 @@ function snapshot(): ProjectDoc {
       height: l.height,
       rotation: l.rotation,
       blendMode: l.blendMode,
+      mask: l.mask,
       src: l.src,
       prompt: l.prompt,
       derivedFrom: l.derivedFrom,
@@ -135,9 +137,11 @@ function changeKey(): string {
     `v:${vp.scale}:${vp.x}:${vp.y}`,
     `s:${s.providerId}:${s.model}:${s.size.w}x${s.size.h}:${s.size.label}:${s.styleId}:${s.isolate}:${s.llmProviderId}`,
   ];
+  /** Pixels stand in as length + tail — never the whole base64 (see above). */
+  const pixels = (value: string | null) =>
+    value === null ? "0" : `${value.length}:${value.slice(-24)}`;
   for (const l of useDocument.getState().layers) {
     if (l.status !== "ready") continue;
-    const src = l.src === null ? "0" : `${l.src.length}:${l.src.slice(-24)}`;
     parts.push(
       [
         l.id,
@@ -152,7 +156,8 @@ function changeKey(): string {
         l.blendMode,
         l.prompt ?? "",
         l.derivedFrom?.id ?? "",
-        src,
+        pixels(l.src),
+        pixels(l.mask),
       ].join("|"),
     );
   }
@@ -424,6 +429,9 @@ async function openProject(id: string, opts: { saveOutgoing: boolean }): Promise
       timer = null;
     }
     resetHistory();
+    // Cached mask stencils belong to the outgoing document's layers; the
+    // incoming one brings its own, and holding both only grows the cache.
+    clearMaskStencils();
     hydrate(doc, { force: true });
     rememberProject(doc.id);
     savedKey = changeKey(); // the freshly loaded doc is by definition clean

@@ -4,6 +4,7 @@ import type Konva from "konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import { compositeOperation, isBlended } from "@latteart/shared";
 import { useImage } from "../lib/useImage";
+import { useMaskedImage } from "../lib/useMaskedImage";
 import { useHasAlpha } from "../lib/useHasAlpha";
 import { checkerPattern } from "../lib/checkerboard";
 import { useDocument, type Layer } from "../stores/documentStore";
@@ -19,7 +20,10 @@ export function LayerNode({
   registerRef: (id: string, node: Konva.Node | null) => void;
 }) {
   const img = useImage(layer.src);
-  const hasAlpha = useHasAlpha(img, layer.src);
+  const drawable = useMaskedImage(img, layer.mask);
+  // Alpha detection runs on the raw image; a mask carves transparency into the
+  // layer by definition, so it earns the checkerboard without a pixel scan.
+  const hasAlpha = useHasAlpha(img, layer.src) || !!layer.mask;
   const select = useDocument((s) => s.select);
   const selected = useDocument((s) => s.selectedId === layer.id);
   const updateLayer = useDocument((s) => s.updateLayer);
@@ -102,7 +106,7 @@ export function LayerNode({
           apply to the checkerboard Rect too, blending the chrome into the stack
           rather than letting the image blend against what's beneath it. */}
       <KonvaImage
-        image={img ?? undefined}
+        image={drawable ?? undefined}
         width={layer.width}
         height={layer.height}
         opacity={layer.opacity}

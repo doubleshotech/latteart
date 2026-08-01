@@ -1,4 +1,5 @@
 import { compositeOperation, type ProjectLayer } from "@latteart/shared";
+import { loadMaskedLayer } from "./layerMask";
 
 /**
  * Flatten the canvas to a small preview image for the project switcher's list.
@@ -31,13 +32,10 @@ function corners(l: ProjectLayer): { x: number; y: number }[] {
   ].map((p) => ({ x: l.x + p.x * cos - p.y * sin, y: l.y + p.x * sin + p.y * cos }));
 }
 
-function loadImage(src: string): Promise<HTMLImageElement | null> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => resolve(null); // a broken layer shouldn't fail the save
-    img.src = src;
-  });
+/** A layer's drawable pixels, masked if it carries a mask. Null on a failed
+ * load — a broken layer shouldn't fail the save. */
+function loadLayer(l: ProjectLayer): Promise<CanvasImageSource | null> {
+  return loadMaskedLayer(l.src!, l.mask).catch(() => null);
 }
 
 /**
@@ -65,7 +63,7 @@ export async function renderThumbnail(layers: ProjectLayer[]): Promise<string | 
 
   // Load first, draw second: drawing must stay in z-order, and awaiting inside
   // the draw loop would interleave the layers.
-  const images = await Promise.all(visible.map((l) => loadImage(l.src!)));
+  const images = await Promise.all(visible.map(loadLayer));
 
   let drew = false;
   visible.forEach((l, i) => {

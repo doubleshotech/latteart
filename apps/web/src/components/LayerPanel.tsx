@@ -4,6 +4,7 @@ import * as Slider from "@radix-ui/react-slider";
 import {
   Blend,
   ChevronDown,
+  Contrast,
   Eye,
   EyeOff,
   GitBranch,
@@ -60,11 +61,33 @@ function Thumb({ layer }: { layer: Layer }) {
     );
   }
   if (layer.src) {
+    // The mask rides as a CSS mask rather than a composited canvas: this is a
+    // 38px preview, not worth an offscreen render per row. `cover`/`center` on
+    // both the image and the mask keeps them aligned under the same crop.
+    // Unsupported `mask-mode: luminance` degrades to showing the layer
+    // unmasked, which is what this thumbnail did before masks existed.
+    // The mask is opaque white-on-black, so alpha masking (the CSS default)
+    // would be a no-op — all three spellings of "read the luminance" are set,
+    // since engines disagree on which they take. `WebkitMaskMode` isn't in
+    // csstype, hence the cast; it's a vendor alias, not a typo.
+    const masked = layer.mask
+      ? ({
+          WebkitMaskImage: `url(${layer.mask})`,
+          maskImage: `url(${layer.mask})`,
+          WebkitMaskSize: "cover",
+          maskSize: "cover",
+          WebkitMaskPosition: "center",
+          maskPosition: "center",
+          maskMode: "luminance",
+          WebkitMaskMode: "luminance",
+          WebkitMaskSourceType: "luminance",
+        } as React.CSSProperties)
+      : {};
     return (
       <img
         src={layer.src}
         alt={layer.name}
-        style={{ ...base, objectFit: "cover" }}
+        style={{ ...base, objectFit: "cover", ...masked }}
         draggable={false}
       />
     );
@@ -163,6 +186,44 @@ function BlendPicker({ layer }: { layer: Layer }) {
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
+  );
+}
+
+/**
+ * Opens the layer-mask editor. Sits beside the blend picker because a mask is
+ * the same kind of thing — how this layer resolves against the stack — rather
+ * than an AI action that spawns a new layer.
+ */
+function MaskButton({ layer }: { layer: Layer }) {
+  const openLayerMaskEdit = useSession((s) => s.openLayerMaskEdit);
+  const masked = !!layer.mask;
+
+  return (
+    <button
+      type="button"
+      title={masked ? "Layer mask — edit or remove" : "Layer mask — hide parts of this layer"}
+      aria-label="Layer mask"
+      draggable={false}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={() => openLayerMaskEdit(layer.id)}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 24,
+        height: 22,
+        flex: "none",
+        borderRadius: 6,
+        background: masked
+          ? "color-mix(in srgb, var(--accent) 16%, transparent)"
+          : "var(--surface-canvas)",
+        border: `1px solid ${masked ? "color-mix(in srgb, var(--accent) 45%, transparent)" : "var(--border)"}`,
+        color: masked ? "var(--accent)" : "var(--text-faint)",
+        cursor: "pointer",
+      }}
+    >
+      <Contrast size={12} strokeWidth={1.8} />
+    </button>
   );
 }
 
@@ -343,9 +404,16 @@ function LayerRow({ layer }: { layer: Layer }) {
           </div>
         ) : (
           <>
-            {/* Shown for the selected layer, and for any layer already using a
-                non-Normal mode so the setting stays visible when it isn't. */}
-            {(selected || isBlended(layer.blendMode)) && <BlendPicker layer={layer} />}
+            {/* Shown for the selected layer, and for any layer already blended
+                or masked so those settings stay visible when it isn't. */}
+            {(selected || isBlended(layer.blendMode) || !!layer.mask) && (
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <BlendPicker layer={layer} />
+                </div>
+                <MaskButton layer={layer} />
+              </div>
+            )}
             <Slider.Root
               className="op-slider"
               min={0}

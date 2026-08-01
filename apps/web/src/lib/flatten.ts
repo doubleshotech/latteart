@@ -1,4 +1,5 @@
 import { compositeOperation } from "@latteart/shared";
+import { loadMaskedLayer } from "./layerMask";
 import type { Layer } from "../stores/documentStore";
 
 export interface FlatResult {
@@ -11,9 +12,9 @@ export interface FlatResult {
 /**
  * Composite the visible layers (bottom→top = array order) into a single PNG.
  * Pure raster — draws each layer's src at its geometry (position, size, rotation,
- * opacity, blend mode) onto an offscreen canvas, independent of the current zoom/pan and
- * without the canvas chrome (shadows, selection). Returns the data URL plus the
- * merged bounding box so callers can place the result exactly over the source.
+ * opacity, blend mode, mask) onto an offscreen canvas, independent of the current
+ * zoom/pan and without the canvas chrome (shadows, selection). Returns the data URL
+ * plus the merged bounding box so callers can place the result exactly over the source.
  *
  * `maxSide` caps the longest output edge (keeps the AI-merge payload bounded);
  * `pixelRatio` supersamples for a crisp export.
@@ -65,16 +66,13 @@ export async function flattenLayers(
   if (!ctx) return null;
   ctx.scale(scale, scale);
 
-  const load = (src: string) =>
-    new Promise<HTMLImageElement>((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error("layer image failed to load"));
-      img.src = src;
-    });
-
   for (const l of visible) {
-    const img = await load(l.src!);
+    // Masked through lib/layerMask, so an export and the on-screen canvas agree.
+    // The mask has to resolve into the layer's own pixels *before* the layer
+    // composites onto the stack — applying it afterwards would erase whatever
+    // sits beneath it too.
+    const img = await loadMaskedLayer(l.src!, l.mask);
+    if (!img) throw new Error("layer image failed to load");
     ctx.save();
     ctx.globalAlpha = l.opacity;
     ctx.globalCompositeOperation = compositeOperation(l.blendMode);

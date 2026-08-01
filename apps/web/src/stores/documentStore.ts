@@ -26,6 +26,14 @@ export interface Layer {
   rotation: number; // degrees
   /** How this layer composites onto the layers below it. */
   blendMode: BlendMode;
+  /**
+   * Non-destructive alpha mask — a grayscale data: URL where white reveals the
+   * layer and black hides it (the Photoshop/GIMP convention). Null = unmasked.
+   * `src` is never rewritten, so a mask can be edited, inverted or removed at
+   * any time without losing pixels. Stretched to the layer's box at render
+   * time, so it need not match `src`'s resolution.
+   */
+  mask: string | null;
   src: string | null; // data: URL; null while generating
   status: LayerStatus;
   progress: number; // 0..100 while generating
@@ -53,6 +61,7 @@ export function makeLayer(partial: Partial<Layer>): Layer {
     // read off disk, and an unknown id would render as normal while still
     // reading as "blended" to the canvas.
     blendMode: isBlendMode(partial.blendMode) ? partial.blendMode : DEFAULT_BLEND_MODE,
+    mask: partial.mask ?? null,
     src: partial.src ?? null,
     status: partial.status ?? "ready",
     progress: partial.progress ?? 0,

@@ -101,6 +101,7 @@ function equal(a: Entry, b: Entry): boolean {
       la.height === lb.height &&
       la.rotation === lb.rotation &&
       la.blendMode === lb.blendMode &&
+      la.mask === lb.mask &&
       la.src === lb.src &&
       la.status === lb.status &&
       la.prompt === lb.prompt &&
