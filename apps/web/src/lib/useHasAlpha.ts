@@ -1,17 +1,13 @@
 import { useEffect, useState } from "react";
+import { imageKey } from "./imageKey";
 
 // Detection is cached so a re-render, remount, or Duplicate (which clones src)
-// reuses the earlier scan instead of re-reading pixels. Keyed by a short
-// fingerprint, NOT the full data: URL — otherwise the Map would pin every
-// generated/edited layer's multi-MB base64 string for the tab's lifetime, even
-// after the layer is deleted. A cap bounds it regardless.
+// reuses the earlier scan instead of re-reading pixels. Keyed by `imageKey`, NOT
+// the full data: URL — otherwise the Map would pin every generated/edited
+// layer's multi-MB base64 string for the tab's lifetime, even after the layer is
+// deleted. A cap bounds it regardless.
 const CACHE_MAX = 512;
 const cache = new Map<string, boolean>();
-
-/** Cheap, collision-safe-enough key: length plus the tail of the data URL. */
-function keyOf(src: string): string {
-  return `${src.length}:${src.slice(-40)}`;
-}
 
 /**
  * Whether an image carries real transparency — any pixel below fully opaque.
@@ -19,11 +15,13 @@ function keyOf(src: string): string {
  * layer earns a checkerboard backing.
  */
 export function useHasAlpha(img: HTMLImageElement | null, src: string | null): boolean {
-  const [hasAlpha, setHasAlpha] = useState(() => (src ? (cache.get(keyOf(src)) ?? false) : false));
+  const [hasAlpha, setHasAlpha] = useState(() =>
+    src ? (cache.get(imageKey(src)) ?? false) : false,
+  );
 
   useEffect(() => {
     if (!src || !img) return;
-    const key = keyOf(src);
+    const key = imageKey(src);
     const known = cache.get(key);
     if (known !== undefined) {
       setHasAlpha(known);

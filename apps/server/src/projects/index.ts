@@ -59,6 +59,19 @@ function readThumbnail(assetsDir: string, ref: string | null | undefined): strin
   return typeof ref === "string" ? (readAsset(assetsDir, ref) ?? null) : null;
 }
 
+/**
+ * Pixels in → an `asset:` ref out. A data: URL is written to a content-hashed
+ * file; a ref the client echoed back is kept only if its asset still exists;
+ * anything else (absent, null, unparseable) stores nothing. Every image field
+ * on a layer — `src` and `mask` alike — goes through here.
+ */
+function storeImage(assetsDir: string, value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  if (value.startsWith("data:")) return writeAsset(assetsDir, value);
+  const file = assetRefFile(value);
+  return file && existsSync(join(assetsDir, file)) ? value : null;
+}
+
 /** Fallback session for a new project when the caller doesn't supply one. */
 const FALLBACK_SESSION: ProjectSession = {
   providerId: "mock",
@@ -97,19 +110,11 @@ export function saveProject(id: string, incoming: ProjectDoc): ProjectDoc {
   const assetsDir = join(dir, "assets");
   mkdirSync(assetsDir, { recursive: true, mode: 0o700 });
 
-  const layers: ProjectLayer[] = incoming.layers.map((l) => {
-    let src: string | null = null;
-    if (typeof l.src === "string") {
-      if (l.src.startsWith("data:")) src = writeAsset(assetsDir, l.src);
-      else {
-        // Tolerate a client echoing back an on-disk ref; keep it only if the
-        // asset actually exists.
-        const file = assetRefFile(l.src);
-        if (file && existsSync(join(assetsDir, file))) src = l.src;
-      }
-    }
-    return { ...l, src };
-  });
+  const layers: ProjectLayer[] = incoming.layers.map((l) => ({
+    ...l,
+    src: storeImage(assetsDir, l.src),
+    mask: storeImage(assetsDir, l.mask),
+  }));
 
   const existing = readManifest(id);
 
@@ -123,14 +128,8 @@ export function saveProject(id: string, incoming: ProjectDoc): ProjectDoc {
   // how a project whose last visible layer was deleted loses its preview.
   let thumbnail: string | null = existing?.thumbnail ?? null;
   if (incoming.thumbnail === null) thumbnail = null;
-  else if (typeof incoming.thumbnail === "string") {
-    if (incoming.thumbnail.startsWith("data:"))
-      thumbnail = writeAsset(assetsDir, incoming.thumbnail);
-    else {
-      const file = assetRefFile(incoming.thumbnail);
-      thumbnail = file && existsSync(join(assetsDir, file)) ? incoming.thumbnail : null;
-    }
-  }
+  else if (typeof incoming.thumbnail === "string")
+    thumbnail = storeImage(assetsDir, incoming.thumbnail);
   const doc: ProjectDoc = {
     ...incoming,
     version: 1,
@@ -145,9 +144,11 @@ export function saveProject(id: string, incoming: ProjectDoc): ProjectDoc {
   writeManifest(id, doc);
 
   // Prune assets the new manifest no longer references (old layer versions,
-  // superseded thumbnails).
+  // superseded thumbnails, masks that were edited or removed). Every image
+  // field written above must appear here, or the prune deletes it the instant
+  // it's written.
   const referenced = new Set(
-    [...layers.map((l) => l.src), thumbnail].flatMap((src) => {
+    [...layers.map((l) => l.src), ...layers.map((l) => l.mask), thumbnail].flatMap((src) => {
       const file = typeof src === "string" ? assetRefFile(src) : null;
       return file ? [file] : [];
     }),
@@ -177,10 +178,13 @@ export function loadProject(id: string): ProjectDoc | null {
   if (!doc) return null;
 
   const assetsDir = join(projectDir(id), "assets");
-  // Asset vanished / non-ref src → keep the layer (name/prompt survive), drop pixels.
+  // Asset vanished / non-ref src → keep the layer (name/prompt survive), drop
+  // pixels. A vanished mask drops to null, which reads as "unmasked" — the
+  // layer comes back whole rather than invisible.
   const layers = doc.layers.map((l) => ({
     ...l,
     src: typeof l.src === "string" ? (readAsset(assetsDir, l.src) ?? null) : null,
+    mask: typeof l.mask === "string" ? (readAsset(assetsDir, l.mask) ?? null) : null,
   }));
 
   return { ...doc, layers, thumbnail: readThumbnail(assetsDir, doc.thumbnail) };

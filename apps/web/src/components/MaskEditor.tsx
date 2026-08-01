@@ -1,40 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { Eraser, SquareDashed, Undo2, Wand2, X } from "lucide-react";
+import { Eraser, SquareDashed, Undo2, Wand2 } from "lucide-react";
 import { rewriteInpaintInstruction } from "../api/inpaintPrompt";
 import { inpaintBlockedNote } from "../lib/actions";
+import { renderStrokes, type Stroke } from "../lib/strokes";
+import { MaskOverlay, PaintStage, fitBox, iconBtn, spinner } from "./MaskOverlay";
 import type { Layer } from "../stores/documentStore";
 import { useDocument } from "../stores/documentStore";
 import { useGeneration } from "../stores/generationStore";
 import { useProviders } from "../stores/providersStore";
 import { useSession } from "../stores/sessionStore";
-
-/** A brush stroke in the source image's native pixel coordinates. */
-export interface Stroke {
-  size: number;
-  points: { x: number; y: number }[];
-}
-
-/** Paint every stroke into `ctx` in `color` (round caps; single points = dots). */
-function renderStrokes(ctx: CanvasRenderingContext2D, strokes: Stroke[], color: string): void {
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.strokeStyle = color;
-  ctx.fillStyle = color;
-  for (const s of strokes) {
-    if (s.points.length === 1) {
-      const p = s.points[0]!;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, s.size / 2, 0, Math.PI * 2);
-      ctx.fill();
-      continue;
-    }
-    ctx.lineWidth = s.size;
-    ctx.beginPath();
-    ctx.moveTo(s.points[0]!.x, s.points[0]!.y);
-    for (const p of s.points.slice(1)) ctx.lineTo(p.x, p.y);
-    ctx.stroke();
-  }
-}
 
 /**
  * Render strokes to a white-on-black PNG data URL at native resolution — the
@@ -53,37 +27,6 @@ export function strokesToMaskDataUrl(strokes: Stroke[], width: number, height: n
 }
 
 const MASK_TINT = "rgba(238,161,69,0.55)";
-const MAX_BOX = { w: 640, h: 460 };
-
-/** Square icon affordance beside the fill input (rewrite / undo). */
-const iconBtn: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: 40,
-  height: 40,
-  borderRadius: 10,
-  background: "var(--surface-2)",
-  border: "1px solid var(--border)",
-  color: "var(--text-muted)",
-  cursor: "pointer",
-  flex: "none",
-};
-
-const spinner: React.CSSProperties = {
-  width: 15,
-  height: 15,
-  borderRadius: "50%",
-  border: "2.4px solid rgba(255,255,255,0.12)",
-  borderTopColor: "var(--accent)",
-  animation: "latte-spin 0.9s linear infinite",
-};
-
-/** Fit natural dims into MAX_BOX, preserving aspect. */
-function fit(nw: number, nh: number): { w: number; h: number } {
-  const r = Math.min(MAX_BOX.w / nw, MAX_BOX.h / nh, 1);
-  return { w: Math.round(nw * r), h: Math.round(nh * r) };
-}
 
 function Editor({ source }: { source: Layer }) {
   const closeMaskEdit = useSession((s) => s.closeMaskEdit);
@@ -108,7 +51,7 @@ function Editor({ source }: { source: Layer }) {
   const rerender = () => force((n) => n + 1);
 
   const active = providers.find((p) => p.id === providerId);
-  const disp = nat ? fit(nat.w, nat.h) : null;
+  const disp = nat ? fitBox(nat.w, nat.h) : null;
   const hasStrokes = strokesRef.current.length > 0;
   // Not gated on a running job — submitting mid-run queues the inpaint (the
   // mask is captured now, so later canvas changes can't skew it).
@@ -272,106 +215,15 @@ function Editor({ source }: { source: Layer }) {
   const blockedNote = inpaintBlockedNote(active);
 
   return (
-    <div
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) closeMaskEdit();
-      }}
-      style={{
-        position: "absolute",
-        inset: 0,
-        zIndex: 8,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "rgba(6,7,9,.62)",
-        backdropFilter: "blur(3px)",
-      }}
+    <MaskOverlay
+      icon={SquareDashed}
+      title="Edit area"
+      subtitle={`Paint over what to regenerate · ${source.name}`}
+      onClose={closeMaskEdit}
     >
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          maxWidth: "min(92%, 700px)",
-          background: "var(--surface-1)",
-          border: "1px solid var(--border-strong)",
-          borderRadius: 14,
-          boxShadow: "0 30px 80px -20px rgba(0,0,0,.8)",
-          overflow: "hidden",
-        }}
-      >
-        {/* header */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 9,
-            padding: "12px 12px 12px 14px",
-            borderBottom: "1px solid var(--border)",
-          }}
-        >
-          <span
-            style={{
-              width: 24,
-              height: 24,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              borderRadius: 6,
-              background: "color-mix(in srgb, var(--accent) 16%, transparent)",
-              color: "var(--accent)",
-            }}
-          >
-            <SquareDashed size={14} strokeWidth={1.8} />
-          </span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 600 }}>Edit area</div>
-            <div
-              style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: 10,
-                color: "var(--text-faint)",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
-              Paint over what to regenerate · {source.name}
-            </div>
-          </div>
-          <button
-            type="button"
-            title="Close"
-            onClick={closeMaskEdit}
-            style={{
-              width: 26,
-              height: 26,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              borderRadius: 7,
-              background: "var(--surface-2)",
-              border: "1px solid var(--border)",
-              color: "var(--text)",
-              cursor: "pointer",
-            }}
-          >
-            <X size={14} strokeWidth={1.9} />
-          </button>
-        </div>
-
-        {/* paint stage */}
-        <div style={{ padding: 14, display: "flex", justifyContent: "center" }}>
-          <div
-            style={{
-              position: "relative",
-              width: disp?.w,
-              height: disp?.h,
-              borderRadius: 8,
-              overflow: "hidden",
-              border: "1px solid var(--border-strong)",
-              background: "var(--surface-canvas)",
-            }}
-          >
+      <>
+        <PaintStage width={disp?.w} height={disp?.h}>
+          <>
             {source.src && (
               <img
                 src={source.src}
@@ -396,8 +248,8 @@ function Editor({ source }: { source: Layer }) {
                 touchAction: "none",
               }}
             />
-          </div>
-        </div>
+          </>
+        </PaintStage>
 
         {/* controls */}
         <div
@@ -555,8 +407,8 @@ function Editor({ source }: { source: Layer }) {
             {blockedNote}
           </div>
         )}
-      </div>
-    </div>
+      </>
+    </MaskOverlay>
   );
 }
 

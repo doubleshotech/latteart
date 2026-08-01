@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { CanvasStage } from "./canvas/CanvasStage";
 import { ErrorToast } from "./components/ErrorToast";
+import { LayerMaskEditor } from "./components/LayerMaskEditor";
 import { LayerPanel } from "./components/LayerPanel";
 import { MaskEditor } from "./components/MaskEditor";
 import { PromptBar } from "./components/PromptBar";
@@ -43,6 +44,7 @@ export default function App() {
           <ZoomControl />
           <PromptBar />
           <MaskEditor />
+          <LayerMaskEditor />
         </div>
         <LayerPanel />
       </div>
