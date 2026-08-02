@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { ACTIONS, outpaintBlockedNote } from "../lib/actions";
 import { buildOutpaintAssets, type Dirs } from "../lib/outpaint";
+import { useMaskedSrc } from "../lib/useMaskedSrc";
 import type { Layer } from "../stores/documentStore";
 import { useGeneration } from "../stores/generationStore";
 import { useProviders } from "../stores/providersStore";
@@ -95,6 +96,8 @@ export function OutpaintDrillIn({ source }: { source: Layer }) {
   const [building, setBuilding] = useState(false);
 
   const active = providers.find((p) => p.id === providerId);
+  // The chip shows what the expand will actually operate on — masked (lib/layerMask).
+  const thumb = useMaskedSrc(source.src, source.mask);
   const meta = ACTIONS.outpaint;
   const amount = AMOUNTS[amountIdx] ?? AMOUNTS[1]!;
   const anySide = dirs.up || dirs.down || dirs.left || dirs.right;
@@ -211,9 +214,9 @@ export function OutpaintDrillIn({ source }: { source: Layer }) {
             border: "1px solid var(--border)",
           }}
         >
-          {source.src ? (
+          {thumb ? (
             <img
-              src={source.src}
+              src={thumb}
               alt=""
               draggable={false}
               style={{

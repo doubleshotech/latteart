@@ -4,6 +4,7 @@ import * as Slider from "@radix-ui/react-slider";
 import { ChevronDown, ChevronLeft, Palette } from "lucide-react";
 import { STYLE_PRESETS } from "@latteart/shared";
 import { ACTIONS } from "../lib/actions";
+import { useMaskedSrc } from "../lib/useMaskedSrc";
 import type { Layer } from "../stores/documentStore";
 import { useGeneration } from "../stores/generationStore";
 import { useProviders } from "../stores/providersStore";
@@ -51,6 +52,8 @@ export function ActionDrillIn({ view, source }: { view: ActionView; source: Laye
   const [focused, setFocused] = useState(false);
 
   const active = providers.find((p) => p.id === providerId);
+  // The chip shows what the action will actually operate on — masked (lib/layerMask).
+  const thumb = useMaskedSrc(source.src, source.mask);
   const meta = ACTIONS[view.kind];
   const Icon = meta.icon;
   const stop = SIMILARITY_STOPS[simIndex] ?? SIMILARITY_STOPS[1];
@@ -184,9 +187,9 @@ export function ActionDrillIn({ view, source }: { view: ActionView; source: Laye
             border: "1px solid var(--border)",
           }}
         >
-          {source.src ? (
+          {thumb ? (
             <img
-              src={source.src}
+              src={thumb}
               alt=""
               draggable={false}
               style={{

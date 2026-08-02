@@ -4,6 +4,7 @@ import { rewriteInpaintInstruction } from "../api/inpaintPrompt";
 import { inpaintBlockedNote } from "../lib/actions";
 import { guessTarget, maskFromMatte, previewFromMatte, type MaskTarget } from "../lib/autoMask";
 import { foregroundMatte, type Matte } from "../lib/removeBackgroundAI";
+import { useMaskedSrc } from "../lib/useMaskedSrc";
 import type { Layer } from "../stores/documentStore";
 import { useGeneration } from "../stores/generationStore";
 import { useProviders } from "../stores/providersStore";
@@ -85,6 +86,9 @@ export function SmartEditPanel({ source }: { source: Layer }) {
   const prepCtl = useRef<AbortController | null>(null);
 
   const active = providers.find((p) => p.id === providerId);
+  // Segment what the canvas shows, not the raw source: a masked-away region has
+  // no subject in it, and this is the same composite the action will send.
+  const pixels = useMaskedSrc(source.src, source.mask);
   const canInpaint = !!active?.available && !!active.capabilities.inpaint;
   const canRewrite = prompt.trim().length > 0 && !rewriting;
   const canGenerate = canInpaint && !!mask && !!prompt.trim();
@@ -93,12 +97,23 @@ export function SmartEditPanel({ source }: { source: Layer }) {
 
   const blockedNote = inpaintBlockedNote(active);
 
+  // A matte describes one set of pixels. If those change under it — the layer's
+  // mask was edited while this panel is open — drop it rather than re-deriving
+  // from it: `maskFromMatte` doesn't re-segment, so a stale matte would quietly
+  // become the mask that reaches the provider.
+  useEffect(() => {
+    prepCtl.current?.abort();
+    setMatte(null);
+    setMask(null);
+    setPreview(null);
+  }, [pixels]);
+
   // Re-derive mask + preview whenever the matte or target changes.
   useEffect(() => {
-    if (!matte || !source.src) return;
+    if (!matte || !pixels) return;
     let alive = true;
     setMask(maskFromMatte(matte, target));
-    previewFromMatte(source.src, matte, target)
+    previewFromMatte(pixels, matte, target)
       .then((p) => {
         if (alive) setPreview(p);
       })
@@ -108,7 +123,7 @@ export function SmartEditPanel({ source }: { source: Layer }) {
     return () => {
       alive = false;
     };
-  }, [matte, target, source.src]);
+  }, [matte, target, pixels]);
 
   // Abort in-flight work if the panel closes.
   useEffect(
@@ -167,13 +182,13 @@ export function SmartEditPanel({ source }: { source: Layer }) {
 
   /** Build the foreground matte (once) so the derive effect can show the preview. */
   const buildPreview = async () => {
-    if (!source.src || preparing) return;
+    if (!pixels || preparing) return;
     prepCtl.current?.abort();
     const ctl = new AbortController();
     prepCtl.current = ctl;
     setPreparing(true);
     try {
-      const m = await foregroundMatte(source.src, ctl.signal);
+      const m = await foregroundMatte(pixels, ctl.signal);
       if (ctl.signal.aborted) return;
       setMatte(m);
     } catch (err) {
@@ -204,7 +219,7 @@ export function SmartEditPanel({ source }: { source: Layer }) {
     else void buildPreview();
   };
   const primaryLabel = preparing ? "Preparing mask…" : mask ? "Generate edit" : "Preview mask";
-  const primaryDisabled = preparing || (mask ? !canGenerate : !source.src);
+  const primaryDisabled = preparing || (mask ? !canGenerate : !pixels);
 
   return (
     <>

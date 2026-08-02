@@ -5,6 +5,7 @@ import type { OutpaintAssets } from "../lib/outpaint";
 import { streamEdit, streamGenerate, streamUpscale } from "../api/generate";
 import { flattenLayers } from "../lib/flatten";
 import { keyFlatBackground } from "../lib/keyFlatBackground";
+import { maskedSource } from "../lib/layerMask";
 import { removeBackgroundAI } from "../lib/removeBackgroundAI";
 import { useDocument } from "./documentStore";
 import { useViewport } from "./viewportStore";
@@ -475,19 +476,38 @@ export const useGeneration = create<GenerationState>((set, get) => {
     // The style override rides along as styleId; the /api/edit route composes
     // it into the prompt server-side (same as /api/generate), so send raw.
     const editPrompt = ACTIONS[kind].prompt(userPrompt);
-    // Content never mutates, so the img2img payload stays the original source —
-    // except outpaint, which sends the source padded onto the expanded canvas.
-    const image = isOutpaint ? outpaint!.image : source.src;
 
-    const prevSelectedId = doc.selectedId;
     // One controller for the whole action so cancel stops the remaining jobs.
     // Hold it in state for the run's full span (runStream leaves a caller's
-    // controller alone) so Cancel also works in the gap between variations.
+    // controller alone) so Cancel also works in the gap between variations —
+    // and publish it *before* the first await, or the queue is already showing
+    // a Cancel button that aborts nothing while the composite below runs.
     const controller = new AbortController();
     set({ controller });
     const jobs = Math.max(1, Math.min(4, count));
 
     try {
+      // A masked layer sends its *masked* pixels — the same composite that goes
+      // to export and AI Merge — so the model works on the image the user can
+      // see, and the mask rides onto the result so it can't hand back content in
+      // a region the user hid. (Providers return opaque images: without carrying
+      // the mask, every action would quietly undo it.) Outpaint did both while
+      // building its expanded canvas, where the geometry differs.
+      //
+      // Snapshot the pair together, before the jobs start: content never mutates,
+      // but a mask edited between variations would otherwise drift from the one
+      // already burned into the pixels every job is sending. A mask that can't be
+      // composited isn't inherited either — the result would claim a mask its
+      // pixels never got.
+      const composed = isOutpaint ? null : await maskedSource(source.src, source.mask);
+      const image = isOutpaint ? outpaint!.image : (composed ?? source.src);
+      const sourceMask = isOutpaint ? outpaint!.resultMask : composed && source.mask;
+      if (controller.signal.aborted) return;
+
+      // Read selection after the composite — it's the pre-run state to restore,
+      // and the user can still click around while the mask is being applied.
+      const prevSelectedId = useDocument.getState().selectedId;
+
       for (let i = 0; i < jobs; i++) {
         if (controller.signal.aborted) break;
 
@@ -515,6 +535,10 @@ export const useGeneration = create<GenerationState>((set, get) => {
             status: "generating",
             progress: 0,
             prompt: kind === "variations" ? live.prompt : userPrompt || live.prompt,
+            // Inherited from the source (see the snapshot above). Non-destructive
+            // as ever: the result carries the mask as a mask, so clearing it on
+            // the new layer reveals whatever the model put there.
+            mask: sourceMask,
             derivedFrom: { id: live.id, name: live.name },
           },
           // A multi-job run (variations) is one undo unit: only the first

@@ -19,7 +19,9 @@ import { loadImage, naturalSize } from "./loadImage";
  * Every renderer goes through {@link maskedImage} — the Konva canvas
  * (via `useMaskedImage`), `lib/flatten` (AI Merge + export) and `lib/thumbnail`
  * (switcher previews) — so a masked layer looks the same on screen, in an export
- * and in its project's preview.
+ * and in its project's preview. {@link maskedSource} extends that to everything
+ * leaving the app: the pixels an AI action sends a provider are the composite
+ * too, so the model works on the image the user is looking at.
  */
 
 /**
@@ -129,20 +131,23 @@ function stencilFor(mask: string): Promise<HTMLCanvasElement | null> {
 }
 
 /**
- * The layer's pixels with its mask applied, as a drawable at the image's native
- * resolution. The mask is stretched to those dimensions, exactly as the layer's
- * own pixels are stretched to its box — so a mask painted at any resolution
- * lines up.
+ * The masked composite at the image's native resolution, or **null when the mask
+ * couldn't be applied** — an undecodable mask, or no 2D context.
  *
- * An undecodable mask returns the image untouched: losing the mask shows too
- * much, losing the layer shows nothing, and the first is the better failure.
+ * Null rather than "the image back" so every caller makes that call explicitly:
+ * a renderer wants the unmasked pixels (losing the mask shows too much, losing
+ * the layer shows nothing, and the first is the better failure), while a caller
+ * deciding whether a *derived* layer inherits the mask needs to know the mask
+ * never made it into the pixels.
  *
- * The composite itself isn't cached (two `drawImage`s over a cached stencil);
- * callers that re-render often memoize the result instead.
+ * The mask is stretched to the image's dimensions, exactly as the layer's own
+ * pixels are stretched to its box — so a mask painted at any resolution lines up.
+ * The composite isn't cached (two `drawImage`s over a cached stencil); callers
+ * that re-render often memoize the result instead.
  */
-export async function maskedImage(img: HTMLImageElement, mask: string): Promise<CanvasImageSource> {
+async function composite(img: HTMLImageElement, mask: string): Promise<HTMLCanvasElement | null> {
   const stencil = await stencilFor(mask);
-  if (!stencil) return img;
+  if (!stencil) return null;
 
   const w = img.naturalWidth || 1;
   const h = img.naturalHeight || 1;
@@ -150,12 +155,20 @@ export async function maskedImage(img: HTMLImageElement, mask: string): Promise<
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext("2d");
-  if (!ctx) return img;
+  if (!ctx) return null;
 
   ctx.drawImage(img, 0, 0, w, h);
   ctx.globalCompositeOperation = "destination-in";
   ctx.drawImage(stencil, 0, 0, w, h);
   return canvas;
+}
+
+/**
+ * The layer's pixels with its mask applied, as a drawable — the renderers' entry
+ * point. Falls back to the image untouched when the mask can't be applied.
+ */
+export async function maskedImage(img: HTMLImageElement, mask: string): Promise<CanvasImageSource> {
+  return (await composite(img, mask)) ?? img;
 }
 
 /** `maskedImage` for a possibly-unmasked layer: loads `src`, applies `mask` when
@@ -168,6 +181,59 @@ export async function loadMaskedLayer(
   const img = await loadImage(src);
   if (!img) return null;
   return mask ? maskedImage(img, mask) : img;
+}
+
+/**
+ * The layer's masked pixels as a PNG data URL — the form an AI action sends to a
+ * provider, and what the editor surfaces (inpaint backdrop, smart-edit matte)
+ * read. This is the same composite {@link loadMaskedLayer} hands to export and
+ * AI Merge, just re-encoded: a provider sees exactly what the canvas shows.
+ * Sending raw `src` instead would have every action operate on pixels the user
+ * hid.
+ *
+ * **Null means nothing was applied** — there was no mask, or it couldn't be
+ * decoded. Callers substitute `src`, which keeps an unmasked layer's payload
+ * byte-identical to what it was before masks existed (no needless re-encode) and
+ * lets a caller that cares tell "masked" from "meant to be, but wasn't".
+ */
+export async function maskedSource(
+  src: string,
+  mask: string | null | undefined,
+): Promise<string | null> {
+  if (!mask) return null;
+  const img = await loadImage(src);
+  if (!img) return null;
+  const out = await composite(img, mask);
+  return out?.toDataURL("image/png") ?? null;
+}
+
+/**
+ * A layer mask re-placed onto a larger canvas: the mask covers `place`, and
+ * everything outside it is revealed. Outpaint's result mask — an expand is the
+ * one action whose result has different dimensions, so its source's mask can't
+ * be inherited verbatim, and the newly added border has to show.
+ *
+ * Null when the mask can't be decoded, matching {@link maskedSource}: the mask
+ * didn't make it into the pixels either, so the result shouldn't claim one.
+ */
+export async function expandMask(
+  mask: string,
+  size: { width: number; height: number },
+  place: { x: number; y: number; width: number; height: number },
+): Promise<string | null> {
+  const img = await loadImage(mask);
+  if (!img) return null;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = size.width;
+  canvas.height = size.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, size.width, size.height);
+  ctx.drawImage(img, place.x, place.y, place.width, place.height);
+  return canvas.toDataURL("image/png");
 }
 
 /** Below this, a mask pixel is hiding something. Just under fully-white, so
