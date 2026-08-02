@@ -1,3 +1,4 @@
+import { expandMask, maskedImage } from "./layerMask";
 import type { Layer } from "../stores/documentStore";
 
 /** Which sides to grow the canvas from. Default: all four (a uniform expand). */
@@ -19,6 +20,13 @@ export interface OutpaintAssets {
   image: string;
   /** White-on-black edge mask (white = the new region to fill), same dims as `image`. */
   mask: string;
+  /**
+   * Layer mask for the *result*, or null when the source was unmasked. Every
+   * other action inherits its source's mask untouched; an expand can't, because
+   * the result is a different size — this one is the source's mask re-placed on
+   * the expanded canvas with the new border revealed.
+   */
+  resultMask: string | null;
   /** Generation pixel size of the expanded canvas. */
   genWidth: number;
   genHeight: number;
@@ -35,14 +43,27 @@ export interface OutpaintAssets {
  */
 const MAX_SIDE = 1536;
 
-/** Load an image element from a data: URL, resolving once its pixels are ready. */
-function loadImage(src: string): Promise<HTMLImageElement> {
+/** Load an image element from a data: URL, resolving once its pixels are ready.
+ * Rejects rather than resolving null (unlike the shared `lib/loadImage`): without
+ * the source there is no expand to build, and the drill-in surfaces the error. */
+function loadImageOrThrow(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error("source image failed to load"));
     img.src = src;
   });
+}
+
+/** A blank canvas of the expanded size, with its 2D context. Every asset here is
+ * one of these plus a couple of draws. */
+function expandedCanvas(w: number, h: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("canvas unavailable");
+  return [canvas, ctx];
 }
 
 /**
@@ -56,7 +77,7 @@ export async function buildOutpaintAssets(
   dirs: Dirs,
   f: number,
 ): Promise<OutpaintAssets> {
-  const img = await loadImage(source.src!);
+  const img = await loadImageOrThrow(source.src!);
   const nw = img.naturalWidth || Math.round(source.width);
   const nh = img.naturalHeight || Math.round(source.height);
 
@@ -76,24 +97,29 @@ export async function buildOutpaintAssets(
   const dw = Math.round(nw * s);
   const dh = Math.round(nh * s);
 
-  // Expanded image: transparent padding + the source drawn at its offset.
-  const imgCanvas = document.createElement("canvas");
-  imgCanvas.width = ew;
-  imgCanvas.height = eh;
-  const ictx = imgCanvas.getContext("2d");
-  if (!ictx) throw new Error("canvas unavailable");
-  ictx.drawImage(img, ox, oy, dw, dh);
+  // The rect the original still occupies on the expanded canvas — shared by all
+  // three assets below, which is what keeps them aligned with each other.
+  const rect = { x: ox, y: oy, width: dw, height: dh };
 
-  // Mask (white = fill): white everywhere, black over the original rect.
-  const maskCanvas = document.createElement("canvas");
-  maskCanvas.width = ew;
-  maskCanvas.height = eh;
-  const mctx = maskCanvas.getContext("2d");
-  if (!mctx) throw new Error("canvas unavailable");
+  // Expanded image: transparent padding + the source drawn at its offset. The
+  // source goes on *masked* (lib/layerMask), so the model extends the image the
+  // canvas shows rather than pixels the user hid.
+  const [imgCanvas, ictx] = expandedCanvas(ew, eh);
+  ictx.drawImage(source.mask ? await maskedImage(img, source.mask) : img, ox, oy, dw, dh);
+
+  // Fill mask (white = regenerate): white everywhere, black over the original.
+  const [maskCanvas, mctx] = expandedCanvas(ew, eh);
   mctx.fillStyle = "#fff";
   mctx.fillRect(0, 0, ew, eh);
   mctx.fillStyle = "#000";
   mctx.fillRect(ox, oy, dw, dh);
+
+  // Result layer mask: the source's mask re-placed on the bigger canvas with the
+  // new border revealed, so an expand grows the frame without resurrecting the
+  // hidden region. Built by lib/layerMask, which owns what a mask's pixels mean.
+  const resultMask = source.mask
+    ? await expandMask(source.mask, { width: ew, height: eh }, rect)
+    : null;
 
   // Display box grows by the same fractions (source keeps its on-canvas spot).
   const dPadL = dirs.left ? source.width * f : 0;
@@ -104,6 +130,7 @@ export async function buildOutpaintAssets(
   return {
     image: imgCanvas.toDataURL("image/png"),
     mask: maskCanvas.toDataURL("image/png"),
+    resultMask,
     genWidth: ew,
     genHeight: eh,
     placement: {

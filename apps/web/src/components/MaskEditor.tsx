@@ -3,6 +3,7 @@ import { Eraser, SquareDashed, Undo2, Wand2 } from "lucide-react";
 import { rewriteInpaintInstruction } from "../api/inpaintPrompt";
 import { inpaintBlockedNote } from "../lib/actions";
 import { renderStrokes, type Stroke } from "../lib/strokes";
+import { useMaskedSrc } from "../lib/useMaskedSrc";
 import { MaskOverlay, PaintStage, fitBox, iconBtn, spinner } from "./MaskOverlay";
 import type { Layer } from "../stores/documentStore";
 import { useDocument } from "../stores/documentStore";
@@ -51,6 +52,9 @@ function Editor({ source }: { source: Layer }) {
   const rerender = () => force((n) => n + 1);
 
   const active = providers.find((p) => p.id === providerId);
+  // Paint over what the canvas shows: a masked layer's hidden pixels aren't
+  // there to be edited, and the payload this submits is masked the same way.
+  const backdrop = useMaskedSrc(source.src, source.mask);
   const disp = nat ? fitBox(nat.w, nat.h) : null;
   const hasStrokes = strokesRef.current.length > 0;
   // Not gated on a running job — submitting mid-run queues the inpaint (the
@@ -224,9 +228,9 @@ function Editor({ source }: { source: Layer }) {
       <>
         <PaintStage width={disp?.w} height={disp?.h}>
           <>
-            {source.src && (
+            {backdrop && (
               <img
-                src={source.src}
+                src={backdrop}
                 alt=""
                 draggable={false}
                 style={{ width: "100%", height: "100%", display: "block", objectFit: "fill" }}

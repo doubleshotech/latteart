@@ -12,12 +12,17 @@ import {
   X,
 } from "lucide-react";
 import { inpaintBlockedNote, outpaintBlockedNote, upscaleBlockedNote } from "../lib/actions";
+import { maskedImage } from "../lib/layerMask";
+import { useMaskedSrc } from "../lib/useMaskedSrc";
 import { useDocument, type Layer } from "../stores/documentStore";
 import { useGeneration } from "../stores/generationStore";
 import { useProviders } from "../stores/providersStore";
 import { useSession } from "../stores/sessionStore";
 
-/** Rasterize a layer's image (any data: URL, SVG included) and download as PNG. */
+/** Rasterize a layer's image (any data: URL, SVG included) and download as PNG.
+ * Masked, like every other way pixels leave the app — through the same
+ * `maskedImage` seam as `lib/flatten` and `lib/thumbnail`, so the file on disk
+ * matches the layer on the canvas and in a whole-canvas export. */
 async function exportLayerPng(layer: Layer) {
   if (!layer.src) return;
   const img = new Image();
@@ -26,12 +31,19 @@ async function exportLayerPng(layer: Layer) {
     img.onerror = () => reject(new Error("image failed to load"));
     img.src = layer.src!;
   });
+  // Sized from the decoded source: the mask composites at that same resolution.
   const canvas = document.createElement("canvas");
   canvas.width = img.naturalWidth || Math.max(1, Math.round(layer.width));
   canvas.height = img.naturalHeight || Math.max(1, Math.round(layer.height));
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("canvas unavailable for export");
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  ctx.drawImage(
+    layer.mask ? await maskedImage(img, layer.mask) : img,
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+  );
   const a = document.createElement("a");
   a.href = canvas.toDataURL("image/png");
   a.download = `${layer.name.replace(/[^\w\- ]+/g, "").trim() || "layer"}.png`;
@@ -137,6 +149,9 @@ export function ActionsDock({ layer }: { layer: Layer }) {
   const openMaskEdit = useSession((s) => s.openMaskEdit);
 
   const active = providers.find((p) => p.id === providerId);
+  // The header chip shows what these actions will operate on — masked, like the
+  // layer's row thumbnail and the drill-in chips.
+  const thumb = useMaskedSrc(layer.src, layer.mask);
   // Not gated on a running job — actions submitted mid-run join the queue.
   const canEdit = !!active?.available && active.capabilities.img2img;
   // Provider is keyed but can't do img2img — disable the actions (guard still
@@ -223,9 +238,9 @@ export function ActionsDock({ layer }: { layer: Layer }) {
     >
       {/* selected-layer header */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 4px 8px" }}>
-        {layer.src ? (
+        {thumb ? (
           <img
-            src={layer.src}
+            src={thumb}
             alt=""
             draggable={false}
             style={{
