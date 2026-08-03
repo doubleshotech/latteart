@@ -1,4 +1,5 @@
 import { compositeOperation, type ProjectLayer } from "@latteart/shared";
+import { boundsOf } from "./bounds";
 import { loadMaskedLayer } from "./layerMask";
 
 /**
@@ -19,19 +20,6 @@ import { loadMaskedLayer } from "./layerMask";
 const MAX_W = 320;
 const MAX_H = 200;
 
-/** The four corners of a layer's box after its rotation about the top-left. */
-function corners(l: ProjectLayer): { x: number; y: number }[] {
-  const rad = (l.rotation * Math.PI) / 180;
-  const cos = Math.cos(rad);
-  const sin = Math.sin(rad);
-  return [
-    { x: 0, y: 0 },
-    { x: l.width, y: 0 },
-    { x: l.width, y: l.height },
-    { x: 0, y: l.height },
-  ].map((p) => ({ x: l.x + p.x * cos - p.y * sin, y: l.y + p.x * sin + p.y * cos }));
-}
-
 /** A layer's drawable pixels, masked if it carries a mask. Null on a failed
  * load — a broken layer shouldn't fail the save. */
 function loadLayer(l: ProjectLayer): Promise<CanvasImageSource | null> {
@@ -47,17 +35,14 @@ export async function renderThumbnail(layers: ProjectLayer[]): Promise<string | 
   const visible = layers.filter((l) => l.visible && l.opacity > 0 && typeof l.src === "string");
   if (visible.length === 0) return null;
 
-  const pts = visible.flatMap(corners);
-  const minX = Math.min(...pts.map((p) => p.x));
-  const minY = Math.min(...pts.map((p) => p.y));
-  const boxW = Math.max(...pts.map((p) => p.x)) - minX;
-  const boxH = Math.max(...pts.map((p) => p.y)) - minY;
-  if (!(boxW > 0) || !(boxH > 0)) return null;
+  const box = boundsOf(visible);
+  if (!box || !(box.width > 0) || !(box.height > 0)) return null;
+  const { x: minX, y: minY } = box;
 
-  const scale = Math.min(MAX_W / boxW, MAX_H / boxH, 1);
+  const scale = Math.min(MAX_W / box.width, MAX_H / box.height, 1);
   const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(boxW * scale));
-  canvas.height = Math.max(1, Math.round(boxH * scale));
+  canvas.width = Math.max(1, Math.round(box.width * scale));
+  canvas.height = Math.max(1, Math.round(box.height * scale));
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
 

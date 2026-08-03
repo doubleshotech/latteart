@@ -1,8 +1,10 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { ChevronDown, Download, Settings, Sparkles } from "lucide-react";
+import { useState } from "react";
 import { LogoMark } from "./LogoMark";
 import { ProjectMenu } from "./ProjectMenu";
 import { flattenLayers } from "../lib/flatten";
+import { exportOra } from "../lib/ora";
 import { useDocument } from "../stores/documentStore";
 import { useGeneration } from "../stores/generationStore";
 import { useProject } from "../stores/projectStore";
@@ -16,6 +18,23 @@ const SAVE_LABELS = {
   error: "Save failed — retrying",
 } as const;
 
+/** A project name as a filename: the user's own words where they're usable, and
+ * a fallback rather than an empty extension-only name when they aren't. */
+function downloadName(project: string, extension: string): string {
+  const base = project
+    .replace(/[/\\?%*:|"<>]/g, "-")
+    .trim()
+    .slice(0, 80);
+  return `${base || "latteart"}.${extension}`;
+}
+
+function download(href: string, filename: string): void {
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = filename;
+  a.click();
+}
+
 export function Topbar() {
   const providers = useProviders((s) => s.providers);
   const providerId = useSession((s) => s.providerId);
@@ -25,7 +44,10 @@ export function Topbar() {
   const layers = useDocument((s) => s.layers);
   const merge = useGeneration((s) => s.merge);
   const busy = useGeneration((s) => s.busy);
+  const setError = useGeneration((s) => s.setError);
   const saveStatus = useProject((s) => s.status);
+  const projectName = useProject((s) => s.name);
+  const [exporting, setExporting] = useState(false);
 
   const active = providers.find((p) => p.id === providerId);
   const activeModelLabel =
@@ -35,17 +57,35 @@ export function Topbar() {
     : "Select provider";
 
   const hasImages = layers.some((l) => l.visible && l.src);
+  // An .ora keeps hidden layers, so it has something to export when a PNG
+  // wouldn't — a document whose every layer is hidden is still a document.
+  const hasLayers = layers.some((l) => l.src);
   // Merge stays clickable mid-run — it queues, and flattens whatever the
   // canvas holds when its turn comes (including results of jobs ahead of it).
   const canMerge = hasImages && !!active?.available && active.capabilities.img2img;
+  const canExport = hasLayers && !busy && !exporting;
 
-  const onExport = async () => {
+  const onExportPng = async () => {
     const flat = await flattenLayers(useDocument.getState().layers, { pixelRatio: 2 });
     if (!flat) return;
-    const a = document.createElement("a");
-    a.href = flat.dataUrl;
-    a.download = "latteart.png";
-    a.click();
+    download(flat.dataUrl, downloadName(projectName, "png"));
+  };
+
+  const onExportOra = async () => {
+    const blob = await exportOra(useDocument.getState().layers);
+    if (!blob) return;
+    // Revoked on the next tick, not immediately: the click has to be dispatched
+    // against a live URL, and the download reads it after this frame.
+    const url = URL.createObjectURL(blob);
+    download(url, downloadName(projectName, "ora"));
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  };
+
+  const runExport = (job: () => Promise<void>) => {
+    setExporting(true);
+    void job()
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Export failed"))
+      .finally(() => setExporting(false));
   };
 
   const onMerge = () => {
@@ -191,37 +231,63 @@ export function Topbar() {
           AI Merge
         </button>
 
-        <button
-          type="button"
-          onClick={onExport}
-          disabled={!hasImages || busy}
-          title={
-            busy
-              ? "Wait for the current generation — export would omit the in-progress layer"
-              : hasImages
-                ? "Export — flatten visible layers to PNG"
-                : "Nothing to export yet"
-          }
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 7,
-            height: 30,
-            padding: "0 12px",
-            borderRadius: 8,
-            background: "var(--surface-2)",
-            border: "1px solid var(--border)",
-            color: "var(--text)",
-            fontSize: 12,
-            fontWeight: 500,
-            fontFamily: "inherit",
-            cursor: hasImages && !busy ? "pointer" : "not-allowed",
-            opacity: hasImages && !busy ? 1 : 0.5,
-          }}
-        >
-          <Download size={15} strokeWidth={1.7} />
-          Export
-        </button>
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild disabled={!canExport}>
+            <button
+              type="button"
+              title={
+                busy
+                  ? "Wait for the current generation — export would omit the in-progress layer"
+                  : hasLayers
+                    ? "Export the canvas"
+                    : "Nothing to export yet"
+              }
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 7,
+                height: 30,
+                padding: "0 10px 0 12px",
+                borderRadius: 8,
+                background: "var(--surface-2)",
+                border: "1px solid var(--border)",
+                color: "var(--text)",
+                fontSize: 12,
+                fontWeight: 500,
+                fontFamily: "inherit",
+                cursor: canExport ? "pointer" : "not-allowed",
+                opacity: canExport ? 1 : 0.5,
+              }}
+            >
+              <Download size={15} strokeWidth={1.7} />
+              {exporting ? "Exporting…" : "Export"}
+              <ChevronDown size={13} strokeWidth={1.9} color="var(--text-faint)" />
+            </button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content className="dd-content" sideOffset={8} align="end">
+              <DropdownMenu.Item
+                className="dd-item"
+                disabled={!hasImages}
+                onSelect={() => runExport(onExportPng)}
+              >
+                <span style={{ flex: 1 }}>
+                  PNG
+                  <span style={{ color: "var(--text-faint)" }}> · flattened image</span>
+                </span>
+              </DropdownMenu.Item>
+              <DropdownMenu.Item className="dd-item" onSelect={() => runExport(onExportOra)}>
+                <span style={{ flex: 1 }}>
+                  OpenRaster
+                  <span style={{ color: "var(--text-faint)" }}>
+                    {" "}
+                    · layers kept, for Krita & GIMP
+                  </span>
+                </span>
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
 
         <button
           type="button"
