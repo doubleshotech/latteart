@@ -8,6 +8,7 @@ import { foregroundMatte } from "../lib/removeBackgroundAI";
 import { renderStroke, type Stroke } from "../lib/strokes";
 import { useDocument, type Layer } from "../stores/documentStore";
 import { useGeneration } from "../stores/generationStore";
+import { useSegmentLabel } from "../stores/segmentStore";
 import { useSession } from "../stores/sessionStore";
 import { MaskOverlay, PaintStage, fitBox, spinner } from "./MaskOverlay";
 
@@ -40,6 +41,7 @@ function Editor({ layer }: { layer: Layer }) {
   const [brush, setBrush] = useState(56);
   const [paint, setPaint] = useState<"hide" | "reveal">("hide");
   const [auto, setAuto] = useState(false);
+  const modelLabel = useSegmentLabel();
   /** Whether the mask currently hides anything — measured from the mask itself
    * (never inferred from "the user painted something"), because a mask that
    * reveals everything is stored as no mask at all. Drives the copy and Reset
@@ -312,7 +314,7 @@ function Editor({ layer }: { layer: Layer }) {
                 }}
               >
                 <span style={spinner} />
-                Separating the subject…
+                {modelLabel ?? "Separating the subject…"}
               </div>
             )}
           </>

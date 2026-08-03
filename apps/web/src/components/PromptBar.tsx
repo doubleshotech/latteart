@@ -18,6 +18,7 @@ import { ACTIONS } from "../lib/actions";
 import { useDocument } from "../stores/documentStore";
 import { useGeneration, type QueuedJob } from "../stores/generationStore";
 import { useProviders } from "../stores/providersStore";
+import { useSegmentLabel } from "../stores/segmentStore";
 import { SIZE_PRESETS, useSession } from "../stores/sessionStore";
 import { useStyles } from "../stores/stylesStore";
 import { NewStyleDialog } from "./NewStyleDialog";
@@ -140,6 +141,11 @@ function QueueStrip() {
   const action = useGeneration((s) => s.action);
   const cancel = useGeneration((s) => s.cancel);
   const clearQueue = useGeneration((s) => s.clearQueue);
+  /** Only "remove-bg" (Cutout's auto-removal and the manual action) waits on the
+   * segmentation model, so only it may show the load line. The matte can be
+   * running for a mask painter while an unrelated Remix streams here, and that
+   * Remix's detail must not be overwritten by a download it isn't waiting on. */
+  const modelLabel = useSegmentLabel();
 
   const genProgress = useDocument(
     (s) => s.layers.find((l) => l.status === "generating")?.progress ?? 0,
@@ -213,7 +219,7 @@ function QueueStrip() {
                     textOverflow: "ellipsis",
                   }}
                 >
-                  {action.detail}
+                  {(action.kind === "remove-bg" ? modelLabel : null) ?? action.detail}
                 </div>
               </div>
             </>

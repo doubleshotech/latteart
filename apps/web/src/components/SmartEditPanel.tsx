@@ -8,6 +8,7 @@ import { useMaskedSrc } from "../lib/useMaskedSrc";
 import type { Layer } from "../stores/documentStore";
 import { useGeneration } from "../stores/generationStore";
 import { useProviders } from "../stores/providersStore";
+import { useSegmentLabel } from "../stores/segmentStore";
 import { useSession } from "../stores/sessionStore";
 
 const fieldLabel: React.CSSProperties = { fontSize: 12, fontWeight: 500, color: "var(--text)" };
@@ -84,6 +85,7 @@ export function SmartEditPanel({ source }: { source: Layer }) {
   const [preview, setPreview] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
   const prepCtl = useRef<AbortController | null>(null);
+  const modelLabel = useSegmentLabel();
 
   const active = providers.find((p) => p.id === providerId);
   // Segment what the canvas shows, not the raw source: a masked-away region has
@@ -218,7 +220,10 @@ export function SmartEditPanel({ source }: { source: Layer }) {
     if (mask) generate();
     else void buildPreview();
   };
-  const primaryLabel = preparing ? "Preparing mask…" : mask ? "Generate edit" : "Preview mask";
+  /** What the panel says while the matte is being built — the model's own load
+   * line takes precedence, since that's the part the user is actually waiting on. */
+  const busyLabel = modelLabel ?? "Preparing mask…";
+  const primaryLabel = preparing ? busyLabel : mask ? "Generate edit" : "Preview mask";
   const primaryDisabled = preparing || (mask ? !canGenerate : !pixels);
 
   return (
@@ -437,7 +442,7 @@ export function SmartEditPanel({ source }: { source: Layer }) {
                 }}
               >
                 {preparing
-                  ? "Preparing mask…"
+                  ? busyLabel
                   : "Preview the mask to confirm the region before generating."}
               </div>
             )}
