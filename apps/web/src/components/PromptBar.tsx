@@ -18,6 +18,7 @@ import { ACTIONS } from "../lib/actions";
 import { useDocument } from "../stores/documentStore";
 import { useGeneration, type QueuedJob } from "../stores/generationStore";
 import { useProviders } from "../stores/providersStore";
+import { useSegmentLabel } from "../stores/segmentStore";
 import { SIZE_PRESETS, useSession } from "../stores/sessionStore";
 import { useStyles } from "../stores/stylesStore";
 import { NewStyleDialog } from "./NewStyleDialog";
@@ -140,6 +141,9 @@ function QueueStrip() {
   const action = useGeneration((s) => s.action);
   const cancel = useGeneration((s) => s.cancel);
   const clearQueue = useGeneration((s) => s.clearQueue);
+  /** Cutout and Remove background wait on the segmentation model before any
+   * pixels move; while it loads that outranks the action's own detail line. */
+  const modelLabel = useSegmentLabel();
 
   const genProgress = useDocument(
     (s) => s.layers.find((l) => l.status === "generating")?.progress ?? 0,
@@ -213,7 +217,7 @@ function QueueStrip() {
                     textOverflow: "ellipsis",
                   }}
                 >
-                  {action.detail}
+                  {modelLabel ?? action.detail}
                 </div>
               </div>
             </>
