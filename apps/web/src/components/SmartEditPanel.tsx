@@ -85,8 +85,6 @@ export function SmartEditPanel({ source }: { source: Layer }) {
   const [preview, setPreview] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
   const prepCtl = useRef<AbortController | null>(null);
-  /** Non-null only while the segmentation model is still downloading/warming —
-   * the first matte of a session waits on ~44-88 MB, so say so. */
   const modelLabel = useSegmentLabel();
 
   const active = providers.find((p) => p.id === providerId);
@@ -222,11 +220,10 @@ export function SmartEditPanel({ source }: { source: Layer }) {
     if (mask) generate();
     else void buildPreview();
   };
-  const primaryLabel = preparing
-    ? (modelLabel ?? "Preparing mask…")
-    : mask
-      ? "Generate edit"
-      : "Preview mask";
+  /** What the panel says while the matte is being built — the model's own load
+   * line takes precedence, since that's the part the user is actually waiting on. */
+  const busyLabel = modelLabel ?? "Preparing mask…";
+  const primaryLabel = preparing ? busyLabel : mask ? "Generate edit" : "Preview mask";
   const primaryDisabled = preparing || (mask ? !canGenerate : !pixels);
 
   return (
@@ -445,7 +442,7 @@ export function SmartEditPanel({ source }: { source: Layer }) {
                 }}
               >
                 {preparing
-                  ? (modelLabel ?? "Preparing mask…")
+                  ? busyLabel
                   : "Preview the mask to confirm the region before generating."}
               </div>
             )}

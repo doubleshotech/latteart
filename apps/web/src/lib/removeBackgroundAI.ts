@@ -1,4 +1,3 @@
-import { useSegment } from "../stores/segmentStore";
 import type { SegmentRequest, SegmentResponse } from "./segment.worker";
 
 /**
@@ -17,6 +16,32 @@ export interface Matte {
   data: Uint8ClampedArray;
   width: number;
   height: number;
+}
+
+/** How far the model's one-time load has got. RMBG is fetched from HF on first
+ * use (44 MB on WASM, 88 MB on WebGPU) and browser-cached after, so this only
+ * ever describes the first matte of a session. */
+export type SegmentLoadPhase = "idle" | "downloading" | "preparing";
+
+type LoadListener = (phase: SegmentLoadPhase, pct: number) => void;
+
+let listener: LoadListener | null = null;
+let loadPhase: SegmentLoadPhase = "idle";
+/** True once the model is resident, so later jobs announce no load at all. */
+let modelReady = false;
+
+/**
+ * Follow the model load. A plain callback rather than a store write, because
+ * `lib/` is a leaf here — every other lib module that touches `stores/` imports
+ * types only. stores/segmentStore subscribes and turns this into UI state.
+ */
+export function onSegmentLoad(fn: LoadListener) {
+  listener = fn;
+}
+
+function setLoadPhase(phase: SegmentLoadPhase, pct = 0) {
+  loadPhase = phase;
+  listener?.(phase, pct);
 }
 
 interface SegmentResult {
@@ -42,12 +67,17 @@ function createWorker(): Worker {
   const w = new Worker(new URL("./segment.worker.ts", import.meta.url), { type: "module" });
   w.addEventListener("message", (ev: MessageEvent<SegmentResponse>) => {
     const msg = ev.data;
-    if (msg.type === "loading") {
-      useSegment.getState().setLoading(msg.pct);
+    if (msg.type === "loadProgress") {
+      // Only while something is actually waiting: a cancelled job leaves the
+      // load running, and its progress must not re-arm an empty status line.
+      // A warm cache reports every file at 100% at once, so a finished download
+      // reads as "preparing" rather than flashing a full bar.
+      if (pending.size > 0) setLoadPhase(msg.pct >= 100 ? "preparing" : "downloading", msg.pct);
       return;
     }
     if (msg.type === "ready") {
-      useSegment.getState().setReady(msg.device);
+      modelReady = true;
+      setLoadPhase("idle");
       return;
     }
     // A job the caller already abandoned still gets a reply — drop it.
@@ -75,7 +105,7 @@ function createWorker(): Worker {
     const err = new Error(ev.message || "segmentation worker failed");
     for (const job of pending.values()) job.reject(err);
     pending.clear();
-    useSegment.getState().setIdle();
+    setLoadPhase("idle");
     // Guarded on identity: a late error from a worker we already replaced must
     // not terminate its successor.
     if (worker === w) worker = null;
@@ -87,19 +117,7 @@ function createWorker(): Worker {
 /** Once nothing is in flight the loading line must clear, or a failed first
  * load leaves "Downloading model · 12%" on screen forever. */
 function settleLoadState() {
-  if (pending.size === 0 && useSegment.getState().phase !== "idle") {
-    useSegment.getState().setIdle();
-  }
-}
-
-function send(request: SegmentRequest) {
-  getWorker().postMessage(request);
-}
-
-/** A cancel is only meaningful to a worker that already has the job — never
- * spin one up just to tell it to stop. */
-function sendCancel(id: number) {
-  worker?.postMessage({ type: "cancel", id } satisfies SegmentRequest);
+  if (pending.size === 0 && loadPhase !== "idle") setLoadPhase("idle");
 }
 
 /**
@@ -114,23 +132,25 @@ function segment(dataUrl: string, signal?: AbortSignal): Promise<SegmentResult> 
   const id = nextId++;
   return new Promise<SegmentResult>((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    // The model may already be resident; `setPreparing` is corrected by the
-    // worker's first message either way, and gives the UI something to say
-    // during the gap before download progress starts flowing.
-    if (useSegment.getState().device === null) useSegment.getState().setPreparing();
+    // Something to say during the gap before download progress starts flowing.
+    // Guarded on `idle` so a second consumer joining mid-download can't knock a
+    // live percentage back to "Preparing model…".
+    if (!modelReady && loadPhase === "idle") setLoadPhase("preparing");
 
     signal?.addEventListener(
       "abort",
       () => {
         if (!pending.delete(id)) return;
-        sendCancel(id);
+        // Only worth telling a worker that already has the job — never spin one
+        // up just to cancel.
+        worker?.postMessage({ type: "cancel", id } satisfies SegmentRequest);
         settleLoadState();
         reject(new DOMException("Aborted", "AbortError"));
       },
       { once: true },
     );
 
-    send({ type: "segment", id, dataUrl });
+    getWorker().postMessage({ type: "segment", id, dataUrl } satisfies SegmentRequest);
   });
 }
 

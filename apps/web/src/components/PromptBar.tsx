@@ -141,8 +141,10 @@ function QueueStrip() {
   const action = useGeneration((s) => s.action);
   const cancel = useGeneration((s) => s.cancel);
   const clearQueue = useGeneration((s) => s.clearQueue);
-  /** Cutout and Remove background wait on the segmentation model before any
-   * pixels move; while it loads that outranks the action's own detail line. */
+  /** Only "remove-bg" (Cutout's auto-removal and the manual action) waits on the
+   * segmentation model, so only it may show the load line. The matte can be
+   * running for a mask painter while an unrelated Remix streams here, and that
+   * Remix's detail must not be overwritten by a download it isn't waiting on. */
   const modelLabel = useSegmentLabel();
 
   const genProgress = useDocument(
@@ -217,7 +219,7 @@ function QueueStrip() {
                     textOverflow: "ellipsis",
                   }}
                 >
-                  {modelLabel ?? action.detail}
+                  {(action.kind === "remove-bg" ? modelLabel : null) ?? action.detail}
                 </div>
               </div>
             </>

@@ -17,7 +17,7 @@ const MODEL_ID = "briaai/RMBG-1.4";
 
 /** Which backend runs the matte. WebGPU is far faster but wants fp16 weights
  * (88 MB) where WASM runs the q8 build (44 MB) — see `loadSession`. */
-export type SegmentDevice = "webgpu" | "wasm";
+type SegmentDevice = "webgpu" | "wasm";
 
 export type SegmentRequest =
   | { type: "segment"; id: number; dataUrl: string }
@@ -25,8 +25,8 @@ export type SegmentRequest =
 
 export type SegmentResponse =
   /** Model download progress, 0…100 across every file the load pulls. */
-  | { type: "loading"; pct: number }
-  | { type: "ready"; device: SegmentDevice }
+  | { type: "loadProgress"; pct: number }
+  | { type: "ready" }
   | {
       type: "done";
       id: number;
@@ -61,8 +61,17 @@ type ProgressInfo = Parameters<NonNullable<PretrainedModelOptions["progress_call
 
 let sessionPromise: Promise<Session> | null = null;
 /** Latched once WebGPU has failed, so the demotion to WASM is permanent for the
- * page rather than re-paid on every call. */
+ * page rather than re-paid on every call. Resets on reload, so a machine that
+ * failed once still gets to try WebGPU again next visit. */
 let forceWasm = false;
+/** The device the current (or last) load attempted. A load that throws has no
+ * Session to read `device` off, so the attempt is recorded here instead. */
+let attemptedDevice: SegmentDevice | null = null;
+
+function demoteToWasm() {
+  forceWasm = true;
+  sessionPromise = null;
+}
 
 /**
  * WebGPU is only worth taking when the adapter has `shader-f16`: without it the
@@ -98,7 +107,7 @@ function onLoadProgress(info: ProgressInfo) {
     loaded += file.loaded;
     total += file.total;
   }
-  post({ type: "loading", pct: Math.min(100, Math.round((loaded / total) * 100)) });
+  post({ type: "loadProgress", pct: Math.min(100, Math.round((loaded / total) * 100)) });
 }
 
 /** Load (once) the segmentation model + processor. transformers.js is imported
@@ -113,10 +122,33 @@ function getSession(): Promise<Session> {
   return sessionPromise;
 }
 
+/**
+ * A session for one job, demoting to WASM if a WebGPU one can't even be built.
+ * Without this a failed WebGPU *load* (ORT init, adapter lost, OOM on the fp16
+ * build) would leave `forceWasm` clear, so every later call re-picks WebGPU and
+ * fails the same way — segmentation permanently dead on that machine, which is
+ * worse than the always-WASM behaviour this replaced. A load that failed for
+ * some other reason (offline, flaky HF fetch) also demotes, and the retry then
+ * surfaces the real error; the cost is staying on WASM until the next reload.
+ */
+async function sessionForJob(): Promise<Session> {
+  try {
+    return await getSession();
+  } catch (err) {
+    if (forceWasm || attemptedDevice !== "webgpu") throw err;
+    demoteToWasm();
+    return await getSession();
+  }
+}
+
 async function loadSession(): Promise<Session> {
   const tf = await import("@huggingface/transformers");
   tf.env.allowLocalModels = false;
   const device = forceWasm ? "wasm" : await pickDevice();
+  attemptedDevice = device;
+  // Fresh counters per attempt: a demotion downloads a *different* build, and a
+  // surviving fp16 entry (88 MB, already complete) would start the q8 bar ~67%.
+  bytes.clear();
   const model = await tf.AutoModel.from_pretrained(MODEL_ID, {
     device,
     // transformers.js defaults WebGPU to fp32 (176 MB) — pin fp16 (88 MB)
@@ -126,7 +158,7 @@ async function loadSession(): Promise<Session> {
     progress_callback: onLoadProgress,
   });
   const processor = await tf.AutoProcessor.from_pretrained(MODEL_ID);
-  post({ type: "ready", device });
+  post({ type: "ready" });
   return { model, processor, RawImage: tf.RawImage, device };
 }
 
@@ -146,7 +178,7 @@ function throwIfCancelled(id: number) {
  */
 async function segment(id: number, dataUrl: string) {
   throwIfCancelled(id);
-  let session = await getSession();
+  let session = await sessionForJob();
   throwIfCancelled(id);
 
   const image = await session.RawImage.fromURL(dataUrl);
@@ -161,8 +193,7 @@ async function segment(id: number, dataUrl: string) {
     // exactly that before (BiRefNet). Demote to WASM once and retry rather than
     // losing the matte; `forceWasm` keeps every later call on the good path.
     if (session.device !== "webgpu" || cancelled.has(id)) throw err;
-    forceWasm = true;
-    sessionPromise = null;
+    demoteToWasm();
     session = await getSession();
     throwIfCancelled(id);
     result = await session.model({ input: pixel_values });

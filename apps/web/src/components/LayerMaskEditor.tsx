@@ -41,8 +41,6 @@ function Editor({ layer }: { layer: Layer }) {
   const [brush, setBrush] = useState(56);
   const [paint, setPaint] = useState<"hide" | "reveal">("hide");
   const [auto, setAuto] = useState(false);
-  /** Non-null only while the segmentation model is still downloading/warming —
-   * the first matte of a session waits on ~44-88 MB, so say so. */
   const modelLabel = useSegmentLabel();
   /** Whether the mask currently hides anything — measured from the mask itself
    * (never inferred from "the user painted something"), because a mask that

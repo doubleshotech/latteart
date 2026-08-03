@@ -1,37 +1,17 @@
 import { create } from "zustand";
-import type { SegmentDevice } from "../lib/segment.worker";
+import { onSegmentLoad, type SegmentLoadPhase } from "../lib/removeBackgroundAI";
 
 /**
- * How far the one-time segmentation-model load has got. RMBG is downloaded from
- * HF on first use (44 MB on WASM, 88 MB on WebGPU) and browser-cached after, so
- * this only ever describes the first matte of a session — every later one goes
- * straight to work with `phase` at "idle".
+ * UI mirror of the segmentation model's one-time load. The matte client owns the
+ * state and pushes it here; this store only makes it renderable, so the
+ * dependency runs stores → lib like every other store.
  */
-export type SegmentPhase = "idle" | "downloading" | "preparing";
-
-interface SegmentState {
-  phase: SegmentPhase;
-  /** 0…100, meaningful only while `phase` is "downloading". */
-  pct: number;
-  /** Which backend the model actually loaded on, once known. */
-  device: SegmentDevice | null;
-  setLoading: (pct: number) => void;
-  setPreparing: () => void;
-  setReady: (device: SegmentDevice) => void;
-  setIdle: () => void;
-}
-
-export const useSegment = create<SegmentState>((set) => ({
+export const useSegment = create<{ phase: SegmentLoadPhase; pct: number }>(() => ({
   phase: "idle",
   pct: 0,
-  device: null,
-  // A warm cache reports every file at 100% in one go, so treat a finished
-  // download as "preparing" rather than flashing a full bar.
-  setLoading: (pct) => set({ phase: pct >= 100 ? "preparing" : "downloading", pct }),
-  setPreparing: () => set({ phase: "preparing" }),
-  setReady: (device) => set({ phase: "idle", pct: 0, device }),
-  setIdle: () => set({ phase: "idle", pct: 0 }),
 }));
+
+onSegmentLoad((phase, pct) => useSegment.setState({ phase, pct }));
 
 /**
  * The status line every matte surface shows while the model loads, or null once
