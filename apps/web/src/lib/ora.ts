@@ -1,6 +1,7 @@
+import { oraCompositeOp } from "@latteart/shared";
 import { boundsOf } from "./bounds";
 import { flattenLayers } from "./flatten";
-import { loadImage } from "./loadImage";
+import { loadImage, naturalSize } from "./loadImage";
 import { loadMaskedLayer } from "./layerMask";
 import { zip, type Bytes, type ZipEntry } from "./zip";
 import type { Layer } from "../stores/documentStore";
@@ -25,7 +26,10 @@ import type { Layer } from "../stores/documentStore";
  *    layer's PNG is placed at its offset at its own pixel size — nothing scales
  *    or rotates it on the way in. So rotation and the layer's on-canvas size
  *    bake into the pixels here, and each layer is written as the axis-aligned
- *    hull of its rotated box.
+ *    hull of its rotated box. Negative offsets are legal, but the document
+ *    "should be cropped to (0,0,w,h) when displaying" — so re-origining the
+ *    stack onto its own bounding box is *required*, not tidiness: a canvas
+ *    whose work sits off-origin would otherwise be cropped away by the reader.
  * 4. **There is no layer-mask concept.** A mask bakes into the layer's alpha,
  *    via the same `lib/layerMask` composite every other renderer uses — the
  *    exported layer is what the canvas shows.
@@ -56,22 +60,12 @@ const MAX_SCALE = 4;
 const THUMB_MAX = 256;
 
 /**
- * The composite-op for a blend mode.
- *
- * latteart's blend ids are CSS/canvas blend-mode names, and OpenRaster names its
- * composite ops after the same SVG modes — so the mapping is mechanical rather
- * than a table that could drift as modes are added: `normal` is spelled
- * `src-over`, everything else keeps its name under the `svg:` prefix.
- *
- * `svg:exclusion` is the one id the spec's list doesn't include. It is still
- * written out: the spec says nothing about unknown values, and readers in
- * practice fall back to normal for an op they don't know (GIMP's importer maps
- * through a table with a `NORMAL` default). Writing the true intent costs
- * nothing and a reader that does know exclusion gets it right, where flattening
- * to `src-over` here would throw the information away for every reader.
+ * An opacity as the spec's "simple floating-point number". Rounding first is
+ * what keeps it simple: `String(1e-7)` is `"1e-7"`, which is a number JS can
+ * read back and an ORA parser expecting plain decimals cannot.
  */
-function compositeOp(mode: string): string {
-  return `svg:${mode === "normal" ? "src-over" : mode}`;
+function opacityValue(opacity: number): string {
+  return String(Number(opacity.toFixed(4)));
 }
 
 function escapeXml(value: string): string {
@@ -86,11 +80,7 @@ function escapeXml(value: string): string {
  * itself when a layer has no mask and a canvas when it does, and the two spell
  * their size differently. */
 function pixelSize(img: CanvasImageSource): { w: number; h: number } | null {
-  if (img instanceof HTMLImageElement) {
-    return img.naturalWidth && img.naturalHeight
-      ? { w: img.naturalWidth, h: img.naturalHeight }
-      : null;
-  }
+  if (img instanceof HTMLImageElement) return naturalSize(img);
   if (img instanceof HTMLCanvasElement) {
     return img.width && img.height ? { w: img.width, h: img.height } : null;
   }
@@ -107,11 +97,18 @@ function pixelSize(img: CanvasImageSource): { w: number; h: number } | null {
  * editor, so the factor is *measured* from the layers instead: the largest
  * pixels-per-unit ratio in the document, which exports the most detailed layer
  * at exactly its native resolution and upsamples the rest to match.
+ *
+ * Both axes are measured, not just width: a layer whose box has been stretched
+ * horizontally still has its full vertical detail to preserve, and taking the
+ * width ratio alone would export it below its own resolution.
  */
 function nativeScale(measured: { layer: Layer; size: { w: number; h: number } }[]): number {
   const ratio = Math.max(
     1,
-    ...measured.map(({ layer, size }) => size.w / Math.max(1, layer.width)),
+    ...measured.flatMap(({ layer, size }) => [
+      size.w / Math.max(1, layer.width),
+      size.h / Math.max(1, layer.height),
+    ]),
   );
   return Math.min(ratio, MAX_SCALE);
 }
@@ -198,9 +195,9 @@ function stackXml(
       `src="${src}"`,
       `x="${x}"`,
       `y="${y}"`,
-      `opacity="${layer.opacity}"`,
+      `opacity="${opacityValue(layer.opacity)}"`,
       `visibility="${layer.visible ? "visible" : "hidden"}"`,
-      `composite-op="${compositeOp(layer.blendMode)}"`,
+      `composite-op="${oraCompositeOp(layer.blendMode)}"`,
     ];
     return `    <layer ${attrs.join(" ")} />`;
   });

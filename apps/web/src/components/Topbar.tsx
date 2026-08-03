@@ -3,6 +3,7 @@ import { ChevronDown, Download, Settings, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { LogoMark } from "./LogoMark";
 import { ProjectMenu } from "./ProjectMenu";
+import { download, downloadBlob, safeFilename } from "../lib/download";
 import { flattenLayers } from "../lib/flatten";
 import { exportOra } from "../lib/ora";
 import { useDocument } from "../stores/documentStore";
@@ -18,22 +19,20 @@ const SAVE_LABELS = {
   error: "Save failed — retrying",
 } as const;
 
-/** A project name as a filename: the user's own words where they're usable, and
- * a fallback rather than an empty extension-only name when they aren't. */
-function downloadName(project: string, extension: string): string {
-  const base = project
-    .replace(/[/\\?%*:|"<>]/g, "-")
-    .trim()
-    .slice(0, 80);
-  return `${base || "latteart"}.${extension}`;
-}
+const exportItem: React.CSSProperties = {
+  flex: 1,
+  display: "flex",
+  flexDirection: "column",
+  gap: 2,
+  maxWidth: 260,
+};
 
-function download(href: string, filename: string): void {
-  const a = document.createElement("a");
-  a.href = href;
-  a.download = filename;
-  a.click();
-}
+const exportNote: React.CSSProperties = {
+  color: "var(--text-faint)",
+  fontSize: 11,
+  lineHeight: 1.35,
+  whiteSpace: "normal",
+};
 
 export function Topbar() {
   const providers = useProviders((s) => s.providers);
@@ -68,17 +67,13 @@ export function Topbar() {
   const onExportPng = async () => {
     const flat = await flattenLayers(useDocument.getState().layers, { pixelRatio: 2 });
     if (!flat) return;
-    download(flat.dataUrl, downloadName(projectName, "png"));
+    download(flat.dataUrl, safeFilename(projectName, "png", "latteart"));
   };
 
   const onExportOra = async () => {
     const blob = await exportOra(useDocument.getState().layers);
     if (!blob) return;
-    // Revoked on the next tick, not immediately: the click has to be dispatched
-    // against a live URL, and the download reads it after this frame.
-    const url = URL.createObjectURL(blob);
-    download(url, downloadName(projectName, "ora"));
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    downloadBlob(blob, safeFilename(projectName, "ora", "latteart"));
   };
 
   const runExport = (job: () => Promise<void>) => {
@@ -271,17 +266,17 @@ export function Topbar() {
                 disabled={!hasImages}
                 onSelect={() => runExport(onExportPng)}
               >
-                <span style={{ flex: 1 }}>
+                <span style={exportItem}>
                   PNG
-                  <span style={{ color: "var(--text-faint)" }}> · flattened image</span>
+                  <span style={exportNote}>One flattened image</span>
                 </span>
               </DropdownMenu.Item>
               <DropdownMenu.Item className="dd-item" onSelect={() => runExport(onExportOra)}>
-                <span style={{ flex: 1 }}>
-                  OpenRaster
-                  <span style={{ color: "var(--text-faint)" }}>
-                    {" "}
-                    · layers kept, for Krita & GIMP
+                <span style={exportItem}>
+                  OpenRaster · .ora
+                  <span style={exportNote}>
+                    Opens in Krita &amp; GIMP. Layers, opacity and blend modes stay editable; masks
+                    and rotation bake into the pixels.
                   </span>
                 </span>
               </DropdownMenu.Item>
