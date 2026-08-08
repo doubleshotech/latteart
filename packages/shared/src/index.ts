@@ -36,6 +36,7 @@ export {
   BLEND_MODES,
   DEFAULT_BLEND_MODE,
   compositeOperation,
+  oraCompositeOp,
   isBlended,
   isBlendMode,
   blendLabel,
