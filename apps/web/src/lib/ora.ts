@@ -1,7 +1,7 @@
 import { oraCompositeOp } from "@latteart/shared";
-import { boundsOf } from "./bounds";
+import { boundsOf, drawPlaced } from "./bounds";
 import { flattenLayers } from "./flatten";
-import { loadImage, naturalSize } from "./loadImage";
+import { naturalSize } from "./loadImage";
 import { loadMaskedLayer } from "./layerMask";
 import { zip, type Bytes, type ZipEntry } from "./zip";
 import type { Layer } from "../stores/documentStore";
@@ -101,6 +101,15 @@ function pixelSize(img: CanvasImageSource): { w: number; h: number } | null {
  * Both axes are measured, not just width: a layer whose box has been stretched
  * horizontally still has its full vertical detail to preserve, and taking the
  * width ratio alone would export it below its own resolution.
+ *
+ * Two honest limits. **One scale covers the whole document**, because the format
+ * places each layer PNG 1:1 at integer offsets — a layer's pixel size *must*
+ * equal its box times the document scale, so per-layer resolution isn't
+ * expressible. A modest layer beside a dense one is therefore upsampled to
+ * match. And **the caps win**: past {@link MAX_SCALE}, or once the document
+ * would exceed {@link MAX_SIDE}, a dense layer in a small box does export below
+ * its own resolution. Both are bounds on what one export may cost, chosen over
+ * an unbounded promise.
  */
 function nativeScale(measured: { layer: Layer; size: { w: number; h: number } }[]): number {
   const ratio = Math.max(
@@ -135,7 +144,7 @@ async function renderLayer(
   img: CanvasImageSource,
   scale: number,
   origin: { x: number; y: number },
-): Promise<{ data: Bytes; x: number; y: number } | null> {
+): Promise<{ data: Bytes; x: number; y: number; width: number; height: number } | null> {
   const hull = boundsOf([layer]);
   if (!hull) return null;
 
@@ -144,17 +153,18 @@ async function renderLayer(
   if (!ctx) return null;
 
   ctx.scale(scale, scale);
-  // Same transform order as every other compositor: to the layer's origin,
-  // rotate about it, draw the box. The hull's own origin becomes (0,0) here,
-  // since this PNG holds nothing but the one layer.
-  ctx.translate(layer.x - hull.x, layer.y - hull.y);
-  ctx.rotate((layer.rotation * Math.PI) / 180);
-  ctx.drawImage(img, 0, 0, layer.width, layer.height);
+  // The same transform every other compositor uses, against the layer's own
+  // hull — this PNG holds nothing but the one layer, so the hull's origin is
+  // (0,0). `bare`: opacity and blend mode stay live in stack.xml, so baking
+  // them here would apply them twice.
+  drawPlaced(ctx, layer, img, hull, { bare: true });
 
   return {
     data: await pngBytes(canvas),
     x: Math.round((hull.x - origin.x) * scale),
     y: Math.round((hull.y - origin.y) * scale),
+    width: canvas.width,
+    height: canvas.height,
   };
 }
 
@@ -166,22 +176,9 @@ async function renderMerged(
   box: { x: number; y: number; width: number; height: number },
   scale: number,
   size: { width: number; height: number },
-): Promise<{ data: Bytes; image: HTMLImageElement | null }> {
+): Promise<HTMLCanvasElement> {
   const flat = await flattenLayers(layers, { box, pixelRatio: scale });
-  if (!flat) return { data: await pngBytes(makeCanvas(size.width, size.height)), image: null };
-  return {
-    data: dataUrlBytes(flat.dataUrl),
-    image: await loadImage(flat.dataUrl),
-  };
-}
-
-/** The bytes behind a base64 `data:` URL. */
-function dataUrlBytes(dataUrl: string): Bytes {
-  const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
+  return flat?.canvas ?? makeCanvas(size.width, size.height);
 }
 
 function stackXml(
@@ -220,6 +217,12 @@ function stackXml(
  * Layers whose image fails to decode are skipped rather than failing the export
  * — the same call every compositor here makes: a broken layer shouldn't cost
  * the user the other nine.
+ *
+ * A layer's `status` is deliberately not consulted: the only pixels this can
+ * see are whatever `src` holds, and a layer mid-regenerate still holds its
+ * previous ones. Exporting during a run is prevented at the button, which is
+ * disabled while the generation store is busy — this reads a document, it
+ * doesn't police when one is readable.
  */
 export async function exportOra(layers: Layer[]): Promise<Blob | null> {
   const withPixels = layers.filter((l) => l.src);
@@ -244,34 +247,48 @@ export async function exportOra(layers: Layer[]): Promise<Blob | null> {
   const longest = Math.max(box.width, box.height) * scale;
   if (longest > MAX_SIDE) scale = MAX_SIDE / Math.max(box.width, box.height);
 
+  const files: ZipEntry[] = [];
+  const stack: { layer: Layer; src: string; x: number; y: number }[] = [];
+  // The document has to contain every layer it declares. A layer's offset and
+  // its PNG's dimensions round independently of the box, so the far edge can
+  // land a pixel past a size derived from the box alone — and the spec says the
+  // image "should be cropped to (0,0,w,h) when displaying", which would take
+  // that column away. Measuring the frame from the layers actually placed makes
+  // it exact by construction rather than by rounding luck.
   const size = {
     width: Math.max(1, Math.round(box.width * scale)),
     height: Math.max(1, Math.round(box.height * scale)),
   };
-
-  const files: ZipEntry[] = [];
-  const stack: { layer: Layer; src: string; x: number; y: number }[] = [];
   for (const [i, { layer, img }] of measured.entries()) {
     const rendered = await renderLayer(layer, img, scale, box);
     if (!rendered) continue;
     const src = `data/layer${i}.png`;
     files.push({ name: src, data: rendered.data });
     stack.push({ layer, src, x: rendered.x, y: rendered.y });
+    size.width = Math.max(size.width, rendered.x + rendered.width);
+    size.height = Math.max(size.height, rendered.y + rendered.height);
   }
   if (!stack.length) return null;
 
   // Only the layers that made it into the stack, so a skipped layer can't
-  // appear in the merged image without appearing as a layer.
+  // appear in the merged image without appearing as a layer. The frame is
+  // handed over in canvas units at the final pixel size, so `mergedimage.png`
+  // matches the `w`/`h` in stack.xml exactly — including any pixel the
+  // measurement above added.
   const exported = stack.map((s) => s.layer);
-  const merged = await renderMerged(exported, box, scale, size);
+  const merged = await renderMerged(
+    exported,
+    { x: box.x, y: box.y, width: size.width / scale, height: size.height / scale },
+    scale,
+    size,
+  );
 
   const thumbScale = Math.min(1, THUMB_MAX / Math.max(size.width, size.height));
   const thumb = makeCanvas(
     Math.round(size.width * thumbScale),
     Math.round(size.height * thumbScale),
   );
-  const thumbCtx = thumb.getContext("2d");
-  if (thumbCtx && merged.image) thumbCtx.drawImage(merged.image, 0, 0, thumb.width, thumb.height);
+  thumb.getContext("2d")?.drawImage(merged, 0, 0, thumb.width, thumb.height);
 
   return zip(
     [
@@ -279,7 +296,7 @@ export async function exportOra(layers: Layer[]): Promise<Blob | null> {
       { name: "mimetype", data: new TextEncoder().encode("image/openraster") },
       { name: "stack.xml", data: new TextEncoder().encode(stackXml(size, stack)) },
       ...files,
-      { name: "mergedimage.png", data: merged.data },
+      { name: "mergedimage.png", data: await pngBytes(merged) },
       { name: "Thumbnails/thumbnail.png", data: await pngBytes(thumb) },
     ],
     "image/openraster",

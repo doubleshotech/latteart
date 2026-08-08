@@ -64,15 +64,18 @@ export function Topbar() {
   const canMerge = hasImages && !!active?.available && active.capabilities.img2img;
   const canExport = hasLayers && !busy && !exporting;
 
+  // Both throw rather than returning quietly when there is nothing to save:
+  // the button has already flipped to "Exporting…", so a silent return reads
+  // as a download that vanished. `runExport` turns it into a toast.
   const onExportPng = async () => {
     const flat = await flattenLayers(useDocument.getState().layers, { pixelRatio: 2 });
-    if (!flat) return;
-    download(flat.dataUrl, safeFilename(projectName, "png", "latteart"));
+    if (!flat) throw new Error("Export failed: nothing visible to flatten");
+    download(flat.canvas.toDataURL("image/png"), safeFilename(projectName, "png", "latteart"));
   };
 
   const onExportOra = async () => {
     const blob = await exportOra(useDocument.getState().layers);
-    if (!blob) return;
+    if (!blob) throw new Error("Export failed: no layer has pixels yet");
     downloadBlob(blob, safeFilename(projectName, "ora", "latteart"));
   };
 

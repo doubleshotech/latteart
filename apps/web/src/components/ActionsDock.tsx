@@ -421,7 +421,7 @@ export function ActionsDock({ layer }: { layer: Layer }) {
           disabled={!layer.src}
           onClick={() => {
             exportLayerPng(layer).catch((e: Error) =>
-              useGeneration.setState({ error: `Export failed: ${e.message}` }),
+              useGeneration.getState().setError(`Export failed: ${e.message}`),
             );
           }}
         >

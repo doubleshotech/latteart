@@ -1,5 +1,5 @@
-import { compositeOperation, type ProjectLayer } from "@latteart/shared";
-import { boundsOf } from "./bounds";
+import type { ProjectLayer } from "@latteart/shared";
+import { boundsOf, drawPlaced } from "./bounds";
 import { loadMaskedLayer } from "./layerMask";
 
 /**
@@ -37,7 +37,6 @@ export async function renderThumbnail(layers: ProjectLayer[]): Promise<string | 
 
   const box = boundsOf(visible);
   if (!box || !(box.width > 0) || !(box.height > 0)) return null;
-  const { x: minX, y: minY } = box;
 
   const scale = Math.min(MAX_W / box.width, MAX_H / box.height, 1);
   const canvas = document.createElement("canvas");
@@ -45,6 +44,8 @@ export async function renderThumbnail(layers: ProjectLayer[]): Promise<string | 
   canvas.height = Math.max(1, Math.round(box.height * scale));
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
+  // Scale once for the whole composite; drawPlaced then works in canvas units.
+  ctx.scale(scale, scale);
 
   // Load first, draw second: drawing must stay in z-order, and awaiting inside
   // the draw loop would interleave the layers.
@@ -54,15 +55,7 @@ export async function renderThumbnail(layers: ProjectLayer[]): Promise<string | 
   visible.forEach((l, i) => {
     const img = images[i];
     if (!img) return;
-    ctx.save();
-    ctx.globalAlpha = l.opacity;
-    ctx.globalCompositeOperation = compositeOperation(l.blendMode);
-    // Match the canvas's transform order: translate to the layer's origin,
-    // rotate about it, then draw the box — the same basis `corners()` measured.
-    ctx.translate((l.x - minX) * scale, (l.y - minY) * scale);
-    ctx.rotate((l.rotation * Math.PI) / 180);
-    ctx.drawImage(img, 0, 0, l.width * scale, l.height * scale);
-    ctx.restore();
+    drawPlaced(ctx, l, img, box);
     drew = true;
   });
   if (!drew) return null;

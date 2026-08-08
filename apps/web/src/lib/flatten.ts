@@ -1,11 +1,15 @@
-import { compositeOperation } from "@latteart/shared";
-import { boundsOf, type Box } from "./bounds";
+import { boundsOf, drawPlaced, type Box } from "./bounds";
 import { loadMaskedLayer } from "./layerMask";
 import type { Layer } from "../stores/documentStore";
 
 export interface FlatResult {
-  /** The composited image as a PNG data URL. */
-  dataUrl: string;
+  /**
+   * The composite itself. A canvas rather than a data URL so a caller pays only
+   * for the encoding it needs: `lib/ora` wants PNG *bytes* and would otherwise
+   * base64-encode, base64-decode and re-decode a full-size image to get them.
+   * Callers that want a data URL call `toDataURL("image/png")`.
+   */
+  canvas: HTMLCanvasElement;
   /** Bounding box of the merged layers, in canvas/world coordinates. */
   box: Box;
 }
@@ -65,14 +69,8 @@ export async function flattenLayers(
     // sits beneath it too.
     const img = await loadMaskedLayer(l.src!, l.mask);
     if (!img) throw new Error("layer image failed to load");
-    ctx.save();
-    ctx.globalAlpha = l.opacity;
-    ctx.globalCompositeOperation = compositeOperation(l.blendMode);
-    ctx.translate(l.x - box.x, l.y - box.y);
-    ctx.rotate((l.rotation * Math.PI) / 180);
-    ctx.drawImage(img, 0, 0, l.width, l.height);
-    ctx.restore();
+    drawPlaced(ctx, l, img, box);
   }
 
-  return { dataUrl: canvas.toDataURL("image/png"), box };
+  return { canvas, box };
 }

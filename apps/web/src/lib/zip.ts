@@ -65,6 +65,21 @@ function dosStamp(when: Date): { time: number; date: number } {
  * downloaded file is typed the way its content claims.
  */
 export function zip(entries: ZipEntry[], type = "application/zip"): Blob {
+  // The scope limits above are the format's, not preferences: sizes and offsets
+  // are 32-bit fields and the entry count is 16-bit, so anything larger doesn't
+  // wrap into a smaller archive, it writes a corrupt one. Refuse instead —
+  // silent corruption in a file the user will open somewhere else is the worst
+  // available failure.
+  if (entries.length > 0xffff) {
+    throw new Error(`too many entries for a zip archive: ${entries.length}`);
+  }
+  let total = 0;
+  for (const entry of entries) {
+    if (entry.data.length > 0xffffffff) throw new Error(`entry too large: ${entry.name}`);
+    total += 30 + 46 + 2 * new TextEncoder().encode(entry.name).length + entry.data.length;
+  }
+  if (total > 0xffffffff) throw new Error(`archive too large: ${total} bytes`);
+
   const encoder = new TextEncoder();
   const stamp = dosStamp(new Date());
   const parts: BlobPart[] = [];

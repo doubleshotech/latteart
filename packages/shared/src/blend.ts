@@ -72,11 +72,20 @@ export function compositeOperation(
  *
  * One honest caveat: OpenRaster's list of composite ops is a closed set of 20
  * values and `exclusion` is not among them, so `svg:exclusion` is written out
- * of spec. It is still the better value to write. A reader that doesn't know an
- * op falls back to normal (GIMP's importer maps through a table with a NORMAL
- * default), which is exactly what writing `svg:src-over` would produce — so the
- * fallback costs nothing a conformant value would have saved, while a reader
- * that does know exclusion gets the layer right.
+ * of spec. It is written anyway, and here is what that actually costs, checked
+ * against the two importers rather than assumed:
+ *
+ * - **GIMP** maps composite-ops through a table with a `NORMAL` default, so an
+ *   unknown op becomes a normal layer.
+ * - **Krita** matches `svg:`-prefixed values against a fixed chain, keeps a
+ *   separate `krita:` branch for its own non-standard ops, and *silently
+ *   ignores* anything it recognises in neither — the file still loads.
+ *
+ * So no reader restores exclusion, and none rejects the file either. The choice
+ * is between a file that records what the user chose and one that claims
+ * "normal", for identical results everywhere today; recording the truth wins.
+ * The residual risk is a stricter validator than either of these rejecting an
+ * out-of-list value.
  */
 export function oraCompositeOp(mode: BlendMode | null | undefined): string {
   const op = compositeOperation(mode);
