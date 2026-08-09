@@ -41,9 +41,9 @@ interface ProjectState {
   connection: ConnectionState;
   /** Why the last boot load failed — the overlay's detail line. */
   connectionError: string | null;
-  /** True while a boot load is on the wire. Distinct from `connection`: an
-   * auto-retry must not flip the overlay back to "connecting" every 5s. */
-  connecting: boolean;
+  /** True while a boot load is on the wire, so the overlay can spin its button
+   * without `connection` itself cycling on every 5s retry. */
+  retrying: boolean;
 }
 
 export const useProject = create<ProjectState>(() => ({
@@ -56,7 +56,7 @@ export const useProject = create<ProjectState>(() => ({
   switching: false,
   connection: "unknown",
   connectionError: null,
-  connecting: false,
+  retrying: false,
 }));
 
 /** Remembers the open project across reloads; falls back to most-recent. */
@@ -80,8 +80,30 @@ function lastProjectId(): string | null {
 
 const DEBOUNCE_MS = 1500;
 const RETRY_MS = 5000;
-/** How long the boot list request may hang before it counts as unreachable. */
+/** How long a boot request may hang before it counts as unreachable. The list
+ * is a directory scan and should be instant; a project document carries every
+ * layer's pixels inline, so it gets far longer. */
 const LIST_TIMEOUT_MS = 4000;
+const DOC_TIMEOUT_MS = 15000;
+
+/**
+ * A boot request, with a deadline. Every fetch on the boot path needs one: a
+ * backend that accepts the connection but never answers leaves the promise
+ * pending forever, and the whole retry loop hangs off that promise settling —
+ * no rejection means no retry, no overlay, and a "Try again" button disabled
+ * for good.
+ */
+async function bootFetch(url: string, timeoutMs: number, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (e) {
+    throw new Error(
+      e instanceof DOMException && e.name === "TimeoutError"
+        ? "the backend accepted the connection but did not answer"
+        : "could not reach the backend",
+    );
+  }
+}
 
 /** The document as it goes over the wire. Transient state (generating
  * placeholders, progress, selection) is stripped; `updatedAt` is stamped by
@@ -342,19 +364,7 @@ async function resolveBootProject(): Promise<ProjectDoc | null> {
   // list is the signal to create a project. A transient 500 must not read as
   // "no projects yet" and strand the user in a blank one. The caller treats a
   // throw as "server state unknown", retries, and never arms autosave.
-  let res: Response;
-  try {
-    // Timed, unlike every other call here: a backend that accepts the
-    // connection but never answers would otherwise leave this promise pending
-    // forever — no rejection, so no retry and no way out of the overlay.
-    res = await fetch("/api/projects", { signal: AbortSignal.timeout(LIST_TIMEOUT_MS) });
-  } catch (e) {
-    throw new Error(
-      e instanceof DOMException && e.name === "TimeoutError"
-        ? "the backend accepted the connection but did not answer"
-        : "could not reach the backend",
-    );
-  }
+  const res = await bootFetch("/api/projects", LIST_TIMEOUT_MS);
   if (!res.ok) throw new Error(`could not list projects (${res.status})`);
   const list = (await res.json()) as ProjectSummary[];
   useProject.setState({ projects: list });
@@ -368,7 +378,7 @@ async function resolveBootProject(): Promise<ProjectDoc | null> {
     ...list.map((p) => p.id).filter((pid) => pid !== wanted),
   ];
   for (const id of ordered) {
-    const one = await fetch(`/api/projects/${id}`);
+    const one = await bootFetch(`/api/projects/${id}`, DOC_TIMEOUT_MS);
     if (!one.ok) continue;
     const doc = (await one.json()) as ProjectDoc | null;
     if (doc) return doc;
@@ -387,7 +397,7 @@ async function loadThenArm(): Promise<void> {
     retryTimer = null;
   }
   loadInFlight = true;
-  useProject.setState({ connecting: true });
+  useProject.setState({ retrying: true });
 
   let loaded = false;
   let failure = "";
@@ -405,7 +415,7 @@ async function loadThenArm(): Promise<void> {
     failure = e instanceof Error ? e.message : String(e);
   } finally {
     loadInFlight = false;
-    useProject.setState({ connecting: false });
+    useProject.setState({ retrying: false });
   }
 
   if (!loaded) {
@@ -533,7 +543,9 @@ function canLeaveProject(): boolean {
  */
 async function createRemote(name?: string): Promise<ProjectDoc> {
   const s = useSession.getState();
-  const res = await fetch("/api/projects", {
+  // Timed like the reads: this is the last step of a boot against an empty
+  // .data dir, so a hang here would strand the boot loader too.
+  const res = await bootFetch("/api/projects", DOC_TIMEOUT_MS, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({

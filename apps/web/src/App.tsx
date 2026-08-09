@@ -25,13 +25,13 @@ export default function App() {
     void initProjectSync();
   }, []);
 
-  // The catalogs come from the same backend as the projects, and unlike the
-  // project loader they don't retry — so they have to be (re)fetched on the
-  // transition to online. Without this a boot with the backend down recovers
-  // into a studio with an empty provider picker and no styles, and only a
-  // manual reload fixes it.
+  // The catalogs come from the same backend as the projects and, unlike the
+  // project loader, they don't retry. Fetching on mount keeps a healthy boot
+  // parallel; fetching again once the connection is up is what makes a boot
+  // against a down backend recover into a usable studio — otherwise it comes
+  // back with an empty provider picker and no styles until a manual reload.
   useEffect(() => {
-    if (connection !== "online") return;
+    if (connection === "offline") return;
     void refresh();
     void refreshLLM();
     void refreshStyles();
