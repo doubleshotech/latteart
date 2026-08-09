@@ -437,7 +437,7 @@ export const useGeneration = create<GenerationState>((set, get) => {
           providerId,
           model,
           prompt: prompt?.trim() || MERGE_PROMPT,
-          image: flat.dataUrl,
+          image: flat.canvas.toDataURL("image/png"),
           mode: "img2img",
         },
         { signal, onEvent },

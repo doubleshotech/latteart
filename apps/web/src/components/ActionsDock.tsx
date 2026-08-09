@@ -15,6 +15,7 @@ import { inpaintBlockedNote, outpaintBlockedNote, upscaleBlockedNote } from "../
 import { maskedImage } from "../lib/layerMask";
 import { useMaskedSrc } from "../lib/useMaskedSrc";
 import { useDocument, type Layer } from "../stores/documentStore";
+import { download, safeFilename } from "../lib/download";
 import { useGeneration } from "../stores/generationStore";
 import { useProviders } from "../stores/providersStore";
 import { useSession } from "../stores/sessionStore";
@@ -44,10 +45,7 @@ async function exportLayerPng(layer: Layer) {
     canvas.width,
     canvas.height,
   );
-  const a = document.createElement("a");
-  a.href = canvas.toDataURL("image/png");
-  a.download = `${layer.name.replace(/[^\w\- ]+/g, "").trim() || "layer"}.png`;
-  a.click();
+  download(canvas.toDataURL("image/png"), safeFilename(layer.name, "png", "layer"));
 }
 
 const iconBox = (active: boolean): React.CSSProperties => ({
@@ -423,7 +421,7 @@ export function ActionsDock({ layer }: { layer: Layer }) {
           disabled={!layer.src}
           onClick={() => {
             exportLayerPng(layer).catch((e: Error) =>
-              useGeneration.setState({ error: `Export failed: ${e.message}` }),
+              useGeneration.getState().setError(`Export failed: ${e.message}`),
             );
           }}
         >

@@ -61,6 +61,38 @@ export function compositeOperation(
 }
 
 /**
+ * The OpenRaster `composite-op` for a blend mode — the export spelling of the
+ * same rule {@link compositeOperation} states for canvas, and here for the same
+ * reason: "normal" is the mode every surface treats specially, and that fact
+ * belongs in one file rather than at each call site.
+ *
+ * The mapping is mechanical, not a table, so it can't drift as modes are added:
+ * ids here are CSS/canvas blend-mode names and OpenRaster names its ops after
+ * the same SVG modes, so only "normal" needs re-spelling.
+ *
+ * One honest caveat: OpenRaster's list of composite ops is a closed set of 20
+ * values and `exclusion` is not among them, so `svg:exclusion` is written out
+ * of spec. It is written anyway, and here is what that actually costs, checked
+ * against the two importers rather than assumed:
+ *
+ * - **GIMP** maps composite-ops through a table with a `NORMAL` default, so an
+ *   unknown op becomes a normal layer.
+ * - **Krita** matches `svg:`-prefixed values against a fixed chain, keeps a
+ *   separate `krita:` branch for its own non-standard ops, and *silently
+ *   ignores* anything it recognises in neither — the file still loads.
+ *
+ * So no reader restores exclusion, and none rejects the file either. The choice
+ * is between a file that records what the user chose and one that claims
+ * "normal", for identical results everywhere today; recording the truth wins.
+ * The residual risk is a stricter validator than either of these rejecting an
+ * out-of-list value.
+ */
+export function oraCompositeOp(mode: BlendMode | null | undefined): string {
+  const op = compositeOperation(mode);
+  return `svg:${op === "source-over" ? "src-over" : op}`;
+}
+
+/**
  * Whether a layer composites through the stack rather than painting straight
  * over it. Canvas chrome that would sit between a layer and its backdrop (the
  * transparency checkerboard, the drop shadow) has to step aside when this is

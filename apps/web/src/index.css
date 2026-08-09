@@ -149,6 +149,15 @@ body {
 .dd-item[data-highlighted] {
   background: var(--surface-2);
 }
+/* A disabled item must read as disabled. Radix already stops it responding;
+   without this it looked identical to a live one and silently did nothing. */
+.dd-item[data-disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.dd-item[data-disabled][data-highlighted] {
+  background: transparent;
+}
 .dd-sep {
   height: 1px;
   background: var(--border);
