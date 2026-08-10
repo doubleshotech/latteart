@@ -19,6 +19,14 @@ import { renderThumbnail } from "../lib/thumbnail";
 
 export type SaveStatus = "idle" | "saving" | "saved" | "error";
 
+/**
+ * Whether the backend has ever answered. This is a *boot* state: it starts
+ * "unknown", resolves once, and never goes back to offline afterwards. A
+ * mid-session outage surfaces as `status: "error"` instead — the document is
+ * already open, so the honest signal is "not saving", not "nothing is here".
+ */
+export type ConnectionState = "unknown" | "online" | "offline";
+
 interface ProjectState {
   /** The open project. Empty only before the first load resolves. */
   id: string;
@@ -30,6 +38,12 @@ interface ProjectState {
   projects: ProjectSummary[];
   /** True while a switch/create/duplicate is swapping the document. */
   switching: boolean;
+  connection: ConnectionState;
+  /** Why the last boot load failed — the overlay's detail line. */
+  connectionError: string | null;
+  /** True while a boot load is on the wire, so the overlay can spin its button
+   * without `connection` itself cycling on every 5s retry. */
+  retrying: boolean;
 }
 
 export const useProject = create<ProjectState>(() => ({
@@ -40,6 +54,9 @@ export const useProject = create<ProjectState>(() => ({
   savedAt: null,
   projects: [],
   switching: false,
+  connection: "unknown",
+  connectionError: null,
+  retrying: false,
 }));
 
 /** Remembers the open project across reloads; falls back to most-recent. */
@@ -63,6 +80,30 @@ function lastProjectId(): string | null {
 
 const DEBOUNCE_MS = 1500;
 const RETRY_MS = 5000;
+/** How long a boot request may hang before it counts as unreachable. The list
+ * is a directory scan and should be instant; a project document carries every
+ * layer's pixels inline, so it gets far longer. */
+const LIST_TIMEOUT_MS = 4000;
+const DOC_TIMEOUT_MS = 15000;
+
+/**
+ * A boot request, with a deadline. Every fetch on the boot path needs one: a
+ * backend that accepts the connection but never answers leaves the promise
+ * pending forever, and the whole retry loop hangs off that promise settling —
+ * no rejection means no retry, no overlay, and a "Try again" button disabled
+ * for good.
+ */
+async function bootFetch(url: string, timeoutMs: number, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (e) {
+    throw new Error(
+      e instanceof DOMException && e.name === "TimeoutError"
+        ? "the backend accepted the connection but did not answer"
+        : "could not reach the backend",
+    );
+  }
+}
 
 /** The document as it goes over the wire. Transient state (generating
  * placeholders, progress, selection) is stripped; `updatedAt` is stamped by
@@ -119,6 +160,9 @@ let inFlight = false;
 /** Resolves when the save currently on the wire settles; null when idle. */
 let inFlightPromise: Promise<void> | null = null;
 let pendingAgain = false;
+/** The pending boot-load retry, so "Try again" can pre-empt it. */
+let retryTimer: number | null = null;
+let loadInFlight = false;
 
 /**
  * A cheap structural fingerprint of the saveable document — every persisted
@@ -320,7 +364,7 @@ async function resolveBootProject(): Promise<ProjectDoc | null> {
   // list is the signal to create a project. A transient 500 must not read as
   // "no projects yet" and strand the user in a blank one. The caller treats a
   // throw as "server state unknown", retries, and never arms autosave.
-  const res = await fetch("/api/projects");
+  const res = await bootFetch("/api/projects", LIST_TIMEOUT_MS);
   if (!res.ok) throw new Error(`could not list projects (${res.status})`);
   const list = (await res.json()) as ProjectSummary[];
   useProject.setState({ projects: list });
@@ -334,7 +378,7 @@ async function resolveBootProject(): Promise<ProjectDoc | null> {
     ...list.map((p) => p.id).filter((pid) => pid !== wanted),
   ];
   for (const id of ordered) {
-    const one = await fetch(`/api/projects/${id}`);
+    const one = await bootFetch(`/api/projects/${id}`, DOC_TIMEOUT_MS);
     if (!one.ok) continue;
     const doc = (await one.json()) as ProjectDoc | null;
     if (doc) return doc;
@@ -345,24 +389,49 @@ async function resolveBootProject(): Promise<ProjectDoc | null> {
 }
 
 async function loadThenArm(): Promise<void> {
+  // One attempt at a time. Two overlapping runs against an empty .data dir both
+  // fall through to `createRemote()` and leave two "Untitled" projects behind.
+  if (loadInFlight) return;
+  if (retryTimer !== null) {
+    window.clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+  loadInFlight = true;
+  useProject.setState({ retrying: true });
+
   let loaded = false;
+  let failure = "";
   try {
     const doc = await resolveBootProject();
     if (doc) {
       hydrate(doc);
       rememberProject(doc.id);
       loaded = true;
+    } else {
+      failure = "the backend has no readable project";
     }
-  } catch {
+  } catch (e) {
     // Backend not up yet.
+    failure = e instanceof Error ? e.message : String(e);
+  } finally {
+    loadInFlight = false;
+    useProject.setState({ retrying: false });
   }
 
   if (!loaded) {
     // Unknown server state — do NOT arm autosave (a save could clobber a project
     // we merely failed to read). Retry the load; stay read-only until it lands.
-    window.setTimeout(() => void loadThenArm(), RETRY_MS);
+    // Telling the user is the whole point: a silent retry loop behind an empty
+    // "Untitled" canvas looks exactly like the projects were lost.
+    useProject.setState({ connection: "offline", connectionError: failure });
+    retryTimer = window.setTimeout(() => {
+      retryTimer = null;
+      void loadThenArm();
+    }, RETRY_MS);
     return;
   }
+
+  useProject.setState({ connection: "online", connectionError: null });
 
   if (armed) return; // idempotent
   armed = true;
@@ -381,6 +450,15 @@ async function loadThenArm(): Promise<void> {
     if (document.visibilityState === "hidden") flushOnUnload();
   });
   window.addEventListener("pagehide", flushOnUnload);
+}
+
+/**
+ * Try the boot load again now, ahead of the 5s retry — the offline overlay's
+ * "Try again". A no-op while an attempt is already on the wire; `loadThenArm`
+ * cancels the pending timer itself, so this can't stack two loops.
+ */
+export function retryConnection(): void {
+  void loadThenArm();
 }
 
 /** Refresh the switcher's list. Failures leave the previous list in place. */
@@ -465,7 +543,9 @@ function canLeaveProject(): boolean {
  */
 async function createRemote(name?: string): Promise<ProjectDoc> {
   const s = useSession.getState();
-  const res = await fetch("/api/projects", {
+  // Timed like the reads: this is the last step of a boot against an empty
+  // .data dir, so a hang here would strand the boot loader too.
+  const res = await bootFetch("/api/projects", DOC_TIMEOUT_MS, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
