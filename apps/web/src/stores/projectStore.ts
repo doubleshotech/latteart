@@ -85,15 +85,25 @@ const RETRY_MS = 5000;
  * layer's pixels inline, so it gets far longer. */
 const LIST_TIMEOUT_MS = 4000;
 const DOC_TIMEOUT_MS = 15000;
+/** An autosave PUT carries every layer's pixels, so it gets the document
+ * deadline rather than the list's. */
+const SAVE_TIMEOUT_MS = DOC_TIMEOUT_MS;
 
 /**
- * A boot request, with a deadline. Every fetch on the boot path needs one: a
+ * A request, with a deadline. Every fetch this store makes needs one, because a
  * backend that accepts the connection but never answers leaves the promise
- * pending forever, and the whole retry loop hangs off that promise settling —
- * no rejection means no retry, no overlay, and a "Try again" button disabled
- * for good.
+ * pending forever, and both of this store's loops hang off a promise settling.
+ *
+ * On the boot path: no rejection means no retry, no overlay, and a "Try again"
+ * button disabled for good. On the save path: no rejection means `inFlight`
+ * stays true, so the topbar sits on "Saving…" and no later edit can schedule
+ * another save.
  */
-async function bootFetch(url: string, timeoutMs: number, init?: RequestInit): Promise<Response> {
+async function fetchWithDeadline(
+  url: string,
+  timeoutMs: number,
+  init?: RequestInit,
+): Promise<Response> {
   try {
     return await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
   } catch (e) {
@@ -226,21 +236,23 @@ async function flush() {
   }
 
   const doc = snapshot();
+  // Pin the target: `await`s below let a switch land mid-save, and the id in
+  // the store would then point at the *new* project. Everything after this
+  // line refers to the project this body actually serialized. Bail before the
+  // promise below exists — returning with it pending would hang `saveNow()`.
+  const id = doc.id;
+  if (!id) return;
+
   let settle = () => {};
   inFlightPromise = new Promise<void>((resolve) => {
     settle = resolve;
   });
-  // Pin the target: `await`s below let a switch land mid-save, and the id in
-  // the store would then point at the *new* project. Everything after this
-  // line refers to the project this body actually serialized.
-  const id = doc.id;
-  if (!id) return;
 
   inFlight = true;
   useProject.setState({ status: "saving" });
   try {
     doc.thumbnail = await renderThumbnail(doc.layers);
-    const res = await fetch(`/api/projects/${id}`, {
+    const res = await fetchWithDeadline(`/api/projects/${id}`, SAVE_TIMEOUT_MS, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(doc),
@@ -364,7 +376,7 @@ async function resolveBootProject(): Promise<ProjectDoc | null> {
   // list is the signal to create a project. A transient 500 must not read as
   // "no projects yet" and strand the user in a blank one. The caller treats a
   // throw as "server state unknown", retries, and never arms autosave.
-  const res = await bootFetch("/api/projects", LIST_TIMEOUT_MS);
+  const res = await fetchWithDeadline("/api/projects", LIST_TIMEOUT_MS);
   if (!res.ok) throw new Error(`could not list projects (${res.status})`);
   const list = (await res.json()) as ProjectSummary[];
   useProject.setState({ projects: list });
@@ -378,7 +390,7 @@ async function resolveBootProject(): Promise<ProjectDoc | null> {
     ...list.map((p) => p.id).filter((pid) => pid !== wanted),
   ];
   for (const id of ordered) {
-    const one = await bootFetch(`/api/projects/${id}`, DOC_TIMEOUT_MS);
+    const one = await fetchWithDeadline(`/api/projects/${id}`, DOC_TIMEOUT_MS);
     if (!one.ok) continue;
     const doc = (await one.json()) as ProjectDoc | null;
     if (doc) return doc;
@@ -545,7 +557,7 @@ async function createRemote(name?: string): Promise<ProjectDoc> {
   const s = useSession.getState();
   // Timed like the reads: this is the last step of a boot against an empty
   // .data dir, so a hang here would strand the boot loader too.
-  const res = await bootFetch("/api/projects", DOC_TIMEOUT_MS, {
+  const res = await fetchWithDeadline("/api/projects", DOC_TIMEOUT_MS, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({

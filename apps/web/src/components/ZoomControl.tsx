@@ -1,4 +1,6 @@
 import { Maximize, Minus, Plus } from "lucide-react";
+import { boundsOf } from "../lib/bounds";
+import { useDocument, type Layer } from "../stores/documentStore";
 import { useViewport } from "../stores/viewportStore";
 
 const iconBtn: React.CSSProperties = {
@@ -14,10 +16,31 @@ const iconBtn: React.CSSProperties = {
   cursor: "pointer",
 };
 
+/**
+ * What the canvas actually shows, and so what "fit" frames: a hidden or fully
+ * transparent layer is not framed, a still-generating one is — its placeholder
+ * occupies that space already. Deliberately looser than `lib/thumbnail`'s and
+ * `lib/flatten`'s predicates, which also demand pixels; framing is about where a
+ * layer sits, not what it has drawn yet.
+ */
+const shows = (l: Layer) => l.visible && l.opacity > 0;
+
 export function ZoomControl() {
   const scale = useViewport((s) => s.scale);
   const setZoom = useViewport((s) => s.setZoom);
-  const reset = useViewport((s) => s.reset);
+  // Subscribe to the answer, not the array: `layers` is replaced on every
+  // progress tick of a running generation, and this button only needs to know
+  // whether anything is there to frame.
+  const hasContent = useDocument((s) => s.layers.some(shows));
+
+  // With nothing to frame the button falls back to resetting the view, which is
+  // what "fit" degenerates to on an empty canvas.
+  const fit = () => {
+    const box = boundsOf(useDocument.getState().layers.filter(shows));
+    const vp = useViewport.getState();
+    if (box) vp.fitTo(box);
+    else vp.reset();
+  };
 
   return (
     <div
@@ -65,8 +88,8 @@ export function ZoomControl() {
           fontSize: 12,
           fontFamily: "inherit",
         }}
-        title="Reset view"
-        onClick={reset}
+        title={hasContent ? "Fit to content" : "Reset view"}
+        onClick={fit}
       >
         <Maximize size={15} strokeWidth={1.7} />
         Fit

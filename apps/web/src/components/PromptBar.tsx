@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   ChevronDown,
@@ -21,7 +21,13 @@ import { useProviders } from "../stores/providersStore";
 import { useSegmentLabel } from "../stores/segmentStore";
 import { SIZE_PRESETS, useSession } from "../stores/sessionStore";
 import { useStyles } from "../stores/stylesStore";
+import { useViewport } from "../stores/viewportStore";
 import { NewStyleDialog } from "./NewStyleDialog";
+
+/** How far the bar floats above the bottom of the canvas. Reported to the
+ * viewport store along with the bar's height, so "fit to content" can keep the
+ * document clear of it — hence one constant rather than a literal in the style. */
+const FLOAT_ABOVE = 26;
 
 const cardBase: React.CSSProperties = {
   width: "100%",
@@ -356,6 +362,21 @@ export function PromptBar() {
   const [preEnhance, setPreEnhance] = useState<string | null>(null);
   const enhanceCtl = useRef<AbortController | null>(null);
 
+  // Tell the viewport how much canvas this bar covers. It grows by the queue
+  // strip while jobs run, so the number has to be measured on every resize —
+  // the same shape as the stage measuring itself in CanvasStage.
+  const barRef = useRef<HTMLDivElement>(null);
+  const setChromeBottom = useViewport((s) => s.setChromeBottom);
+  useEffect(() => {
+    const el = barRef.current;
+    if (!el) return;
+    const measure = () => setChromeBottom(FLOAT_ABOVE + el.offsetHeight);
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    measure();
+    return () => ro.disconnect();
+  }, [setChromeBottom]);
+
   const active = providers.find((p) => p.id === providerId);
   // The active style label — a custom style wins over a preset of the same id
   // (ids never collide, but this order keeps the lookup unambiguous). "none" and
@@ -434,10 +455,11 @@ export function PromptBar() {
 
   return (
     <div
+      ref={barRef}
       style={{
         position: "absolute",
         left: "50%",
-        bottom: 26,
+        bottom: FLOAT_ABOVE,
         transform: "translateX(-50%)",
         width: 780,
         maxWidth: "calc(100% - 40px)",
