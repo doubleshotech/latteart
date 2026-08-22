@@ -3,7 +3,7 @@
 /* eslint-disable @typescript-eslint/no-floating-promises */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { boundsOf, corners, drawPlaced, type Composited, type Placed } from "./bounds.ts";
+import { boundsOf, corners, drawPlaced, type Box, type Composited, type Placed } from "./bounds.ts";
 
 /**
  * `bounds.ts` states its own contract: {@link corners} and {@link drawPlaced}
@@ -25,10 +25,7 @@ function assertClose(actual: number, expected: number, what: string): void {
   assert.ok(Math.abs(actual - expected) < EPS, `${what}: expected ${expected}, got ${actual}`);
 }
 
-function assertBox(
-  actual: { x: number; y: number; width: number; height: number } | null,
-  expected: { x: number; y: number; width: number; height: number },
-): void {
+function assertBox(actual: Box | null, expected: Box): void {
   assert.ok(actual, "expected a box, got null");
   assertClose(actual.x, expected.x, "x");
   assertClose(actual.y, expected.y, "y");
@@ -179,6 +176,32 @@ const composited = (over: Partial<Composited> = {}): Composited => ({
 /** `drawPlaced` only forwards this to `drawImage`; it never reads from it. */
 const IMAGE = {} as CanvasImageSource;
 
+/**
+ * Replay the transform `drawPlaced` recorded onto the four corners of the
+ * rectangle it drew, back in canvas coordinates. This is the measuring half's
+ * counterpart: whatever comes out here has to equal {@link corners}, or a layer
+ * lands somewhere its hull did not predict.
+ */
+function drawnCorners(calls: DrawCall[], origin: { x: number; y: number }) {
+  const [tx, ty] = calls.find((c) => c.op === "translate")!.args as [number, number];
+  const [radians] = calls.find((c) => c.op === "rotate")!.args as [number];
+  const drawn = calls.find((c) => c.op === "drawImage")!.args;
+  const width = drawn[3] as number;
+  const height = drawn[4] as number;
+
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  return [
+    { x: 0, y: 0 },
+    { x: width, y: 0 },
+    { x: width, y: height },
+    { x: 0, y: height },
+  ].map((p) => ({
+    x: origin.x + tx + p.x * cos - p.y * sin,
+    y: origin.y + ty + p.x * sin + p.y * cos,
+  }));
+}
+
 describe("drawPlaced", () => {
   it("translates to the layer's origin, then rotates, then draws", () => {
     const layer = composited({ x: 10, y: 20, rotation: 90 });
@@ -196,15 +219,22 @@ describe("drawPlaced", () => {
     assert.deepEqual(calls[3]!.args, [IMAGE, 0, 0, 100, 50], "drawn at the post-transform origin");
   });
 
-  it("draws at the layer's own size, so the measured hull matches what lands", () => {
-    const layer = composited({ x: -30, y: 40, width: 64, height: 48 });
+  it("lands the drawn rectangle exactly on the hull corners() measured", () => {
+    // The file's whole claim in one assertion. A rotated layer and an offset
+    // origin are both required: at rotation 0 the pivot equals the layer's own
+    // x/y, so the check would hold for a transform order that is plainly wrong.
+    const layer = composited({ x: -30, y: 40, width: 64, height: 48, rotation: 37 });
+    const origin = { x: 12, y: -5 };
 
     const { calls, ctx } = recordingContext();
-    drawPlaced(ctx, layer, IMAGE, { x: 0, y: 0 });
+    drawPlaced(ctx, layer, IMAGE, origin);
 
-    const hull = corners(layer);
-    assert.deepEqual(calls[1]!.args, [hull[0]!.x, hull[0]!.y], "translate lands on the pivot");
-    assert.deepEqual(calls[3]!.args.slice(3), [64, 48]);
+    const drawn = drawnCorners(calls, origin);
+    const measured = corners(layer);
+    for (const [i, corner] of drawn.entries()) {
+      assertClose(corner.x, measured[i]!.x, `drawn corner ${i} x`);
+      assertClose(corner.y, measured[i]!.y, `drawn corner ${i} y`);
+    }
   });
 
   it("applies opacity and blend mode by default", () => {

@@ -20,9 +20,15 @@ const url = (body: string) => `data:image/png;base64,${body}`;
 
 describe("imageKey", () => {
   it("is the source length, a colon, then the last 40 characters", () => {
-    const src = url("A".repeat(100));
+    // Spelled out rather than recomputed with the implementation's own
+    // expression: `${src.length}:${src.slice(-40)}` as an expectation would
+    // still pass if both sides changed together, which is the one bug that
+    // matters here. `url()` adds 22 characters, so this source is 122 long and
+    // ends in 40 "B"s.
+    const src = `${url("A".repeat(60))}${"B".repeat(40)}`;
 
-    assert.equal(imageKey(src), `${src.length}:${src.slice(-TAIL)}`);
+    assert.equal(src.length, 122, "guard the arithmetic this expectation rests on");
+    assert.equal(imageKey(src), `122:${"B".repeat(40)}`);
   });
 
   it("keeps a short source whole rather than padding it", () => {
@@ -47,11 +53,14 @@ describe("imageKey", () => {
     );
   });
 
-  it("is stable and equal for the same source", () => {
+  it("is pure, so a cache lookup finds what a previous call stored", () => {
     const src = url("payload".repeat(30));
 
+    // The only implementation this can fail is a stateful one — a counter, a
+    // nonce, a WeakMap keyed on identity. That is worth one line: a key that
+    // varies between calls turns every cache in the app into a memory leak
+    // that never hits.
     assert.equal(imageKey(src), imageKey(src));
-    assert.equal(imageKey(src), imageKey(`${src}`));
   });
 
   it("ignores differences earlier than the last 40 characters, as documented", () => {

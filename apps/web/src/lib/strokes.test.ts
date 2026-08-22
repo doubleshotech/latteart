@@ -116,8 +116,9 @@ describe("renderStroke — a single tap", () => {
     const { ops, ctx } = recordingContext();
     renderStroke(ctx, stroke({ points: [{ x: 8, y: 9 }] }));
 
+    // The exact sequence already forbids `stroke`, which is the point: a
+    // zero-length line paints nothing under any cap.
     assert.deepEqual(ops(), ["beginPath", "arc", "fill"]);
-    assert.ok(!ops().includes("stroke"), "a zero-length line strokes nothing under any cap");
   });
 
   it("gives the dot half the brush size as its radius", () => {

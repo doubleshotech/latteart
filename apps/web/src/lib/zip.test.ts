@@ -38,9 +38,31 @@ interface ParsedEntry {
   localOffset: number;
   compressedSize: number;
   uncompressedSize: number;
+  /** MS-DOS packed time and date, still packed — {@link unpackStamp} reads them. */
+  dosTime: number;
+  dosDate: number;
+}
+
+/** Undo the MS-DOS packing `dosStamp` applies. Seconds are stored halved. */
+function unpackStamp(time: number, date: number) {
+  return {
+    year: ((date >> 9) & 0x7f) + 1980,
+    month: (date >> 5) & 0x0f,
+    day: date & 0x1f,
+    hours: (time >> 11) & 0x1f,
+    minutes: (time >> 5) & 0x3f,
+    seconds: (time & 0x1f) * 2,
+  };
 }
 
 const bytes = (s: string): Bytes => new TextEncoder().encode(s) as Bytes;
+
+/**
+ * A payload that only claims to be huge. The size guards read `.length` before
+ * anything indexes the buffer, so this reaches them without allocating gigabytes
+ * — the reason those two branches are testable at all.
+ */
+const oversized = (length: number) => ({ length }) as unknown as Bytes;
 
 async function bytesOf(blob: Blob): Promise<Uint8Array> {
   return new Uint8Array(await blob.arrayBuffer());
@@ -79,6 +101,8 @@ function readArchive(buf: Uint8Array): {
     assert.equal(view.getUint32(p, true), CENTRAL_SIG, `central directory signature at entry ${i}`);
     const flags = view.getUint16(p + 8, true);
     const method = view.getUint16(p + 10, true);
+    const dosTime = view.getUint16(p + 12, true);
+    const dosDate = view.getUint16(p + 14, true);
     const crc = view.getUint32(p + 16, true);
     const compressedSize = view.getUint32(p + 20, true);
     const uncompressedSize = view.getUint32(p + 24, true);
@@ -104,12 +128,18 @@ function readArchive(buf: Uint8Array): {
     assert.equal(localName, name, "local and central names must match");
     assert.equal(view.getUint16(localOffset + 6, true), flags, `local flags for ${name}`);
     assert.equal(view.getUint16(localOffset + 8, true), method, `local method for ${name}`);
+    assert.equal(view.getUint16(localOffset + 10, true), dosTime, `local time for ${name}`);
+    assert.equal(view.getUint16(localOffset + 12, true), dosDate, `local date for ${name}`);
     assert.equal(view.getUint32(localOffset + 14, true), crc, `local CRC for ${name}`);
-    assert.equal(view.getUint32(localOffset + 18, true), compressedSize, `local size for ${name}`);
+    assert.equal(
+      view.getUint32(localOffset + 18, true),
+      compressedSize,
+      `local compressed size for ${name}`,
+    );
     assert.equal(
       view.getUint32(localOffset + 22, true),
       uncompressedSize,
-      `local size for ${name}`,
+      `local uncompressed size for ${name}`,
     );
 
     const start = localOffset + LOCAL_LEN + localNameLen + localExtraLen;
@@ -122,6 +152,8 @@ function readArchive(buf: Uint8Array): {
       localOffset,
       compressedSize,
       uncompressedSize,
+      dosTime,
+      dosDate,
     });
     p += CENTRAL_LEN + nameLen + extraLen + commentLen;
   }
@@ -177,7 +209,10 @@ describe("zip — archive structure", () => {
 
     const { entries } = await parse(zip([{ name, data: bytes("x") }]));
 
-    assert.equal(entries[0]!.flags & 0x0800, 0x0800, "bit 11 marks the name as UTF-8");
+    // Equality, not a mask: `zip.ts` documents that it writes no data
+    // descriptor and no encryption, so bit 11 must be the *only* flag set. A
+    // mask would wave through a stray bit that changes how a reader behaves.
+    assert.equal(entries[0]!.flags, 0x0800, "bit 11, and nothing else, is set");
     assert.equal(entries[0]!.name, name);
   });
 
@@ -197,6 +232,50 @@ describe("zip — archive structure", () => {
     assert.equal(entries[0]!.compressedSize, 0);
     assert.equal(entries[0]!.data.length, 0);
     assert.equal(entries[0]!.crc, 0, "CRC-32 of no bytes is 0");
+  });
+});
+
+describe("zip — MS-DOS timestamp", () => {
+  it("packs today's date into the DOS date field", async () => {
+    // The packing is three shifts into 16 bits; nothing else in the repo reads
+    // it back, so a wrong shift would ship a file dated 2044 in silence.
+    const before = new Date();
+    const { entries } = await parse(zip([{ name: "a", data: bytes("x") }]));
+    const after = new Date();
+
+    const stamp = unpackStamp(entries[0]!.dosTime, entries[0]!.dosDate);
+    const ymd = (d: Date) => [d.getFullYear(), d.getMonth() + 1, d.getDate()];
+    // Two readings, in case the test straddles midnight.
+    assert.ok(
+      JSON.stringify([stamp.year, stamp.month, stamp.day]) === JSON.stringify(ymd(before)) ||
+        JSON.stringify([stamp.year, stamp.month, stamp.day]) === JSON.stringify(ymd(after)),
+      `decoded ${stamp.year}-${stamp.month}-${stamp.day}, expected ${ymd(after).join("-")}`,
+    );
+  });
+
+  it("packs a time whose every field is in range", async () => {
+    const { entries } = await parse(zip([{ name: "a", data: bytes("x") }]));
+
+    const { hours, minutes, seconds } = unpackStamp(entries[0]!.dosTime, entries[0]!.dosDate);
+    assert.ok(hours <= 23, `hours ${hours}`);
+    assert.ok(minutes <= 59, `minutes ${minutes}`);
+    // DOS stores seconds halved, so odd values are unrepresentable by design.
+    assert.ok(seconds <= 58 && seconds % 2 === 0, `seconds ${seconds}`);
+  });
+
+  it("gives every entry in one archive the same stamp", async () => {
+    const { entries } = await parse(
+      zip([
+        { name: "a", data: bytes("x") },
+        { name: "b", data: bytes("y") },
+        { name: "c", data: bytes("z") },
+      ]),
+    );
+
+    // Documented: the entries are written in the same instant, so file browsers
+    // get a plausible date rather than three drifting ones.
+    assert.equal(new Set(entries.map((e) => e.dosDate)).size, 1);
+    assert.equal(new Set(entries.map((e) => e.dosTime)).size, 1);
   });
 });
 
@@ -233,6 +312,28 @@ describe("zip — refusals", () => {
     assert.throws(() => zip(tooMany), /too many entries/);
     // One fewer is exactly the limit, and must not throw.
     assert.doesNotThrow(() => zip(tooMany.slice(0, 0xffff)));
+  });
+
+  it("refuses an entry larger than the 32-bit size field", () => {
+    // No 4 GB allocation needed: `zip` reads `.length` before it touches a
+    // byte, so a stub reaches the guard in microseconds. Without this the
+    // refusal path — which the module calls its reason to exist, since a
+    // corrupt archive fails somewhere the user cannot see — never runs.
+    assert.throws(
+      () => zip([{ name: "huge.png", data: oversized(0x100000000) }]),
+      /entry too large: huge\.png/,
+    );
+  });
+
+  it("refuses an archive whose total overflows, even when each entry fits", () => {
+    // Five 1 GiB entries: every one is under the per-entry cap, so only the
+    // running total catches this. That is a genuinely separate branch.
+    const entries = Array.from({ length: 5 }, (_, i) => ({
+      name: `p${i}.bin`,
+      data: oversized(0x40000000),
+    }));
+
+    assert.throws(() => zip(entries), /archive too large/);
   });
 });
 
