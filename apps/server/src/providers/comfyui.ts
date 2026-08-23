@@ -471,13 +471,11 @@ export const comfyuiProvider: ImageProvider = {
     const dataUrls = await runGraph(baseUrl, graph, ctx, signal);
     return {
       id: crypto.randomUUID(),
-      images: dataUrls.map(
-        (dataUrl): GeneratedImage => ({
-          dataUrl,
-          width: req.width ?? 1024,
-          height: req.height ?? 1024,
-        }),
-      ),
+      images: dataUrls.map((dataUrl): GeneratedImage => ({
+        dataUrl,
+        width: req.width ?? 1024,
+        height: req.height ?? 1024,
+      })),
       provider: "comfyui",
       model: ckpt,
       seed,
