@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vp dev",
     "build": "tsc -b && vp build",
+    "test": "tsx --test \"src/**/*.test.ts\"",
     "lint": "vp lint",
     "preview": "vp preview"
   },
@@ -37,6 +38,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
     "tailwindcss": "catalog:",
+    "tsx": "^4.19.2",
     "typescript": "~6.0.2",
     "vite": "catalog:",
     "vite-plus": "catalog:"

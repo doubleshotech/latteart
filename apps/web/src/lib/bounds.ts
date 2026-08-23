@@ -8,8 +8,9 @@ import { compositeOperation, type BlendMode } from "@latteart/shared";
  * corners — never `x, y, width, height`. Every offscreen compositor needs that
  * hull to frame its output (`lib/flatten` for export and AI Merge,
  * `lib/thumbnail` for switcher previews, `lib/ora` for the document canvas and
- * each layer's placement), and all three have to agree with the editor canvas
- * and with each other. One definition, one transform order.
+ * each layer's placement, and the topbar's "Fit" via `viewport.fitTo`), and all
+ * four have to agree with the editor canvas and with each other. One
+ * definition, one transform order.
  *
  * Measuring and drawing are both here, and that is the point: the transform
  * order — translate to the layer's origin, rotate about it, then draw the box —
