@@ -55,6 +55,7 @@ MIT-licensed toolchain (Vite/Rolldown, Vitest, Oxlint, Oxfmt, tsgo).
 | `apps/web`        | Vite + React + TypeScript UI. Zustand state, Konva canvas.      |
 | `apps/server`     | Hono on Node — the local backend. Holds keys, routes providers. |
 | `packages/shared` | Domain types shared by web and server.                          |
+| `apps/site`       | The marketing site — a static, zero-JS landing page.            |
 
 Frontend ↔ backend are type-shared via **Hono RPC**.
 
