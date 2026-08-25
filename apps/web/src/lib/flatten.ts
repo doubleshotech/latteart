@@ -1,5 +1,6 @@
 import { boundsOf, drawPlaced, type Box } from "./bounds";
 import { loadMaskedLayer } from "./layerMask";
+import { context2d, makeRaster, type Raster } from "./raster";
 import type { Layer } from "../stores/documentStore";
 
 export interface FlatResult {
@@ -7,9 +8,11 @@ export interface FlatResult {
    * The composite itself. A canvas rather than a data URL so a caller pays only
    * for the encoding it needs: `lib/ora` wants PNG *bytes* and would otherwise
    * base64-encode, base64-decode and re-decode a full-size image to get them.
-   * Callers that want a data URL call `toDataURL("image/png")`.
+   * Whichever canvas kind the environment builds (this runs in the export
+   * worker too) — callers that want a data URL go through `lib/raster`'s
+   * `pngDataUrl`, which handles both.
    */
-  canvas: HTMLCanvasElement;
+  canvas: Raster;
   /** Bounding box of the merged layers, in canvas/world coordinates. */
   box: Box;
 }
@@ -55,10 +58,8 @@ export async function flattenLayers(
     if (longest > opts.maxSide) scale = opts.maxSide / Math.max(box.width, box.height);
   }
 
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(box.width * scale));
-  canvas.height = Math.max(1, Math.round(box.height * scale));
-  const ctx = canvas.getContext("2d");
+  const canvas = makeRaster(Math.round(box.width * scale), Math.round(box.height * scale));
+  const ctx = context2d(canvas);
   if (!ctx) return null;
   ctx.scale(scale, scale);
 
@@ -69,7 +70,8 @@ export async function flattenLayers(
     // sits beneath it too.
     const img = await loadMaskedLayer(l.src!, l.mask);
     if (!img) throw new Error("layer image failed to load");
-    drawPlaced(ctx, l, img, box);
+    drawPlaced(ctx, l, img.source, box);
+    img.close();
   }
 
   return { canvas, box };

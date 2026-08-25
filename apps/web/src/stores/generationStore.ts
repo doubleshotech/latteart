@@ -4,6 +4,7 @@ import { ACTIONS, isInpaintKind, type ActionKind } from "../lib/actions";
 import type { OutpaintAssets } from "../lib/outpaint";
 import { streamEdit, streamGenerate, streamUpscale } from "../api/generate";
 import { flattenLayers } from "../lib/flatten";
+import { pngDataUrl } from "../lib/raster";
 import { keyFlatBackground } from "../lib/keyFlatBackground";
 import { maskedSource } from "../lib/layerMask";
 import { removeBackgroundAI } from "../lib/removeBackgroundAI";
@@ -431,13 +432,16 @@ export const useGeneration = create<GenerationState>((set, get) => {
       progress: 0,
     });
 
-    await runStream(layerId, prevSelectedId, ({ signal, onEvent }) =>
+    // The encode awaits *inside* the thunk: runStream publishes its
+    // AbortController before invoking it, so Cancel stays live during the
+    // encode — an await ahead of runStream would reopen the PR #11 gap.
+    await runStream(layerId, prevSelectedId, async ({ signal, onEvent }) =>
       streamEdit(
         {
           providerId,
           model,
           prompt: prompt?.trim() || MERGE_PROMPT,
-          image: flat.canvas.toDataURL("image/png"),
+          image: await pngDataUrl(flat.canvas),
           mode: "img2img",
         },
         { signal, onEvent },

@@ -3,9 +3,8 @@ import { ChevronDown, Download, Settings, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { LogoMark } from "./LogoMark";
 import { ProjectMenu } from "./ProjectMenu";
-import { download, downloadBlob, safeFilename } from "../lib/download";
-import { flattenLayers } from "../lib/flatten";
-import { exportOra } from "../lib/ora";
+import { downloadBlob, safeFilename } from "../lib/download";
+import { exportOraOffThread, exportPngOffThread } from "../lib/exporter";
 import { useDocument } from "../stores/documentStore";
 import { useGeneration } from "../stores/generationStore";
 import { useProject } from "../stores/projectStore";
@@ -47,6 +46,9 @@ export function Topbar() {
   const saveStatus = useProject((s) => s.status);
   const projectName = useProject((s) => s.name);
   const [exporting, setExporting] = useState(false);
+  // Step progress from the worker, null until the first report. Component
+  // state, not a store — the button label is the only consumer.
+  const [exportPct, setExportPct] = useState<number | null>(null);
 
   const active = providers.find((p) => p.id === providerId);
   const activeModelLabel =
@@ -66,24 +68,31 @@ export function Topbar() {
 
   // Both throw rather than returning quietly when there is nothing to save:
   // the button has already flipped to "Exporting…", so a silent return reads
-  // as a download that vanished. `runExport` turns it into a toast.
+  // as a download that vanished. `runExport` turns it into a toast. The work
+  // itself runs in lib/export.worker — the canvas stays live while it encodes.
   const onExportPng = async () => {
-    const flat = await flattenLayers(useDocument.getState().layers, { pixelRatio: 2 });
-    if (!flat) throw new Error("Export failed: nothing visible to flatten");
-    download(flat.canvas.toDataURL("image/png"), safeFilename(projectName, "png", "latteart"));
+    const blob = await exportPngOffThread(useDocument.getState().layers);
+    if (!blob) throw new Error("Export failed: nothing visible to flatten");
+    downloadBlob(blob, safeFilename(projectName, "png", "latteart"));
   };
 
   const onExportOra = async () => {
-    const blob = await exportOra(useDocument.getState().layers);
+    const blob = await exportOraOffThread(useDocument.getState().layers, (done, total) =>
+      setExportPct(Math.round((done / total) * 100)),
+    );
     if (!blob) throw new Error("Export failed: no layer has pixels yet");
     downloadBlob(blob, safeFilename(projectName, "ora", "latteart"));
   };
 
   const runExport = (job: () => Promise<void>) => {
     setExporting(true);
+    setExportPct(null);
     void job()
       .catch((e: unknown) => setError(e instanceof Error ? e.message : "Export failed"))
-      .finally(() => setExporting(false));
+      .finally(() => {
+        setExporting(false);
+        setExportPct(null);
+      });
   };
 
   const onMerge = () => {
@@ -258,7 +267,11 @@ export function Topbar() {
               }}
             >
               <Download size={15} strokeWidth={1.7} />
-              {exporting ? "Exporting…" : "Export"}
+              {!exporting
+                ? "Export"
+                : exportPct === null
+                  ? "Exporting…"
+                  : `Exporting · ${exportPct}%`}
               <ChevronDown size={13} strokeWidth={1.9} color="var(--text-faint)" />
             </button>
           </DropdownMenu.Trigger>

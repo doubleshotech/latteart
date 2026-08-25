@@ -1,5 +1,6 @@
 import { imageKey } from "./imageKey";
 import { loadImage, naturalSize } from "./loadImage";
+import { context2d, decodeImage, makeRaster, pngDataUrl, type Raster } from "./raster";
 
 /**
  * Layer masks — the compositing half.
@@ -22,6 +23,11 @@ import { loadImage, naturalSize } from "./loadImage";
  * and in its project's preview. {@link maskedSource} extends that to everything
  * leaving the app: the pixels an AI action sends a provider are the composite
  * too, so the model works on the image the user is looking at.
+ *
+ * The compositing core (stencil build, {@link loadMaskedLayer}) goes through
+ * `lib/raster` and runs in the export worker as well as on the main thread.
+ * The helpers below it (`maskedSource`, `expandMask`, `invertMask`,
+ * `masksAnything`) are main-thread-only and keep using the DOM directly.
  */
 
 /**
@@ -42,7 +48,7 @@ export function luma(r: number, g: number, b: number): number {
 const STENCIL_BUDGET = 64 * 1024 * 1024;
 
 interface Stencil {
-  canvas: Promise<HTMLCanvasElement | null>;
+  canvas: Promise<Raster | null>;
   /** RGBA bytes, counted once the canvas resolves (0 until then). */
   bytes: number;
 }
@@ -77,19 +83,20 @@ export function clearMaskStencils(): void {
  * and treating a transparent pixel as "hidden" (luminance 0) is the sane reading
  * of one that isn't.
  */
-async function buildStencil(mask: string): Promise<HTMLCanvasElement | null> {
-  const img = await loadImage(mask);
-  const size = naturalSize(img);
-  if (!img || !size) return null;
+async function buildStencil(mask: string): Promise<Raster | null> {
+  const img = await decodeImage(mask);
+  if (!img) return null;
 
-  const canvas = document.createElement("canvas");
-  canvas.width = size.w;
-  canvas.height = size.h;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  if (!ctx) return null;
-  ctx.drawImage(img, 0, 0);
+  const canvas = makeRaster(img.width, img.height);
+  const ctx = context2d(canvas, { willReadFrequently: true });
+  if (!ctx) {
+    img.close();
+    return null;
+  }
+  ctx.drawImage(img.source, 0, 0);
+  img.close();
 
-  const image = ctx.getImageData(0, 0, size.w, size.h);
+  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const px = image.data;
   for (let i = 0; i < px.length; i += 4) {
     px[i + 3] = luma(px[i]!, px[i + 1]!, px[i + 2]!);
@@ -104,7 +111,7 @@ async function buildStencil(mask: string): Promise<HTMLCanvasElement | null> {
 /** The cached alpha stencil for a mask, or null if it can't be decoded. A
  * failure is evicted rather than cached, so a transient decode error doesn't
  * permanently disable the mask. */
-function stencilFor(mask: string): Promise<HTMLCanvasElement | null> {
+function stencilFor(mask: string): Promise<Raster | null> {
   const key = imageKey(mask);
   const hit = stencils.get(key);
   if (hit) return hit.canvas;
@@ -145,21 +152,21 @@ function stencilFor(mask: string): Promise<HTMLCanvasElement | null> {
  * The composite isn't cached (two `drawImage`s over a cached stencil); callers
  * that re-render often memoize the result instead.
  */
-async function composite(img: HTMLImageElement, mask: string): Promise<HTMLCanvasElement | null> {
+async function composite(
+  img: CanvasImageSource,
+  size: { w: number; h: number },
+  mask: string,
+): Promise<Raster | null> {
   const stencil = await stencilFor(mask);
   if (!stencil) return null;
 
-  const w = img.naturalWidth || 1;
-  const h = img.naturalHeight || 1;
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d");
+  const canvas = makeRaster(size.w, size.h);
+  const ctx = context2d(canvas);
   if (!ctx) return null;
 
-  ctx.drawImage(img, 0, 0, w, h);
+  ctx.drawImage(img, 0, 0, size.w, size.h);
   ctx.globalCompositeOperation = "destination-in";
-  ctx.drawImage(stencil, 0, 0, w, h);
+  ctx.drawImage(stencil, 0, 0, size.w, size.h);
   return canvas;
 }
 
@@ -168,19 +175,38 @@ async function composite(img: HTMLImageElement, mask: string): Promise<HTMLCanva
  * point. Falls back to the image untouched when the mask can't be applied.
  */
 export async function maskedImage(img: HTMLImageElement, mask: string): Promise<CanvasImageSource> {
-  return (await composite(img, mask)) ?? img;
+  const size = naturalSize(img);
+  if (!size) return img;
+  return (await composite(img, size, mask)) ?? img;
 }
 
-/** `maskedImage` for a possibly-unmasked layer: loads `src`, applies `mask` when
- * there is one. Null when the pixels can't be loaded, which callers treat as a
- * layer to skip. The shared entry point for the offscreen compositors. */
+/** A layer's drawable pixels plus their size, from {@link loadMaskedLayer}.
+ * `close` gives a decoded bitmap's memory back — a no-op when the pixels live
+ * in a composite canvas instead. Call it once the pixels are drawn; the export
+ * worker outlives the export, so leaked bitmaps stay resident there. */
+export interface LayerPixels {
+  source: CanvasImageSource;
+  width: number;
+  height: number;
+  close(): void;
+}
+
+/** The masked composite for a possibly-unmasked layer: decodes `src`, applies
+ * `mask` when there is one, falls back to the unmasked pixels when the mask
+ * can't be applied. Null when the pixels can't be loaded, which callers treat
+ * as a layer to skip. The shared entry point for the offscreen compositors,
+ * and environment-neutral — this is what the export worker renders from. */
 export async function loadMaskedLayer(
   src: string,
   mask: string | null | undefined,
-): Promise<CanvasImageSource | null> {
-  const img = await loadImage(src);
+): Promise<LayerPixels | null> {
+  const img = await decodeImage(src);
   if (!img) return null;
-  return mask ? maskedImage(img, mask) : img;
+  if (!mask) return img;
+  const out = await composite(img.source, { w: img.width, h: img.height }, mask);
+  if (!out) return img;
+  img.close();
+  return { source: out, width: out.width, height: out.height, close: () => {} };
 }
 
 /**
@@ -202,9 +228,10 @@ export async function maskedSource(
 ): Promise<string | null> {
   if (!mask) return null;
   const img = await loadImage(src);
-  if (!img) return null;
-  const out = await composite(img, mask);
-  return out?.toDataURL("image/png") ?? null;
+  const size = naturalSize(img);
+  if (!img || !size) return null;
+  const out = await composite(img, size, mask);
+  return out ? pngDataUrl(out) : null;
 }
 
 /**

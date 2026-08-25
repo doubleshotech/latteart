@@ -1,4 +1,5 @@
 import { compositeOperation, type BlendMode } from "@latteart/shared";
+import type { Raster2D } from "./raster";
 
 /**
  * Where a layer actually sits on the canvas.
@@ -75,7 +76,7 @@ export interface Composited extends Placed {
  * opacity and blend mode stay live in `stack.xml` — passes `bare`.
  */
 export function drawPlaced(
-  ctx: CanvasRenderingContext2D,
+  ctx: Raster2D,
   layer: Composited,
   img: CanvasImageSource,
   origin: { x: number; y: number },

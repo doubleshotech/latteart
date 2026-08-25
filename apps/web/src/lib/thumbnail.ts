@@ -1,6 +1,6 @@
 import type { ProjectLayer } from "@latteart/shared";
 import { boundsOf, drawPlaced } from "./bounds";
-import { loadMaskedLayer } from "./layerMask";
+import { loadMaskedLayer, type LayerPixels } from "./layerMask";
 
 /**
  * Flatten the canvas to a small preview image for the project switcher's list.
@@ -22,7 +22,7 @@ const MAX_H = 200;
 
 /** A layer's drawable pixels, masked if it carries a mask. Null on a failed
  * load — a broken layer shouldn't fail the save. */
-function loadLayer(l: ProjectLayer): Promise<CanvasImageSource | null> {
+function loadLayer(l: ProjectLayer): Promise<LayerPixels | null> {
   return loadMaskedLayer(l.src!, l.mask).catch(() => null);
 }
 
@@ -55,7 +55,8 @@ export async function renderThumbnail(layers: ProjectLayer[]): Promise<string | 
   visible.forEach((l, i) => {
     const img = images[i];
     if (!img) return;
-    drawPlaced(ctx, l, img, box);
+    drawPlaced(ctx, l, img.source, box);
+    img.close();
     drew = true;
   });
   if (!drew) return null;
