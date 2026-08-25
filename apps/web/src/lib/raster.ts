@@ -51,14 +51,20 @@ export function context2d(
   return (raster as HTMLCanvasElement).getContext("2d", opts) as Raster2D | null;
 }
 
-/** A decoded image: drawable pixels plus their size, and a way to give the
- * memory back. `close` matters in the export worker, which outlives the export
- * and would otherwise keep every layer's decoded bitmap resident. */
-export interface DecodedImage {
-  source: ImageBitmap;
+/** Drawable pixels plus their size, and a way to give the memory back.
+ * `close` matters in the export worker, which outlives the export and would
+ * otherwise keep every decoded bitmap resident; it is a no-op when the pixels
+ * live in a canvas instead. */
+export interface Pixels {
+  source: CanvasImageSource;
   width: number;
   height: number;
   close(): void;
+}
+
+/** {@link Pixels} whose source is specifically the decoded bitmap. */
+export interface DecodedImage extends Pixels {
+  source: ImageBitmap;
 }
 
 /**

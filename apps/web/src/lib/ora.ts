@@ -223,11 +223,15 @@ export async function exportOra(
   });
   if (!measured.length) return null;
 
+  // Every exit from here on has to give the decoded bitmaps back — a leaked
+  // one stays resident in the worker, which outlives the export.
+  const closeAll = () => {
+    for (const { img } of measured) img.close();
+  };
+
   const box = boundsOf(measured.map((m) => m.layer));
   if (!box || !(box.width > 0) || !(box.height > 0)) {
-    // Decoded bitmaps are already live — give them back even on the empty
-    // path, or a degenerate document leaves them resident in the worker.
-    for (const { img } of measured) img.close();
+    closeAll();
     return null;
   }
 
@@ -252,17 +256,21 @@ export async function exportOra(
   // document; honest enough for a button label.
   const total = measured.length + 2;
   let done = 0;
-  for (const [i, { layer, img }] of measured.entries()) {
-    const rendered = await renderLayer(layer, img.source, scale, box);
-    onProgress(++done, total);
-    if (!rendered) continue;
-    const src = `data/layer${i}.png`;
-    files.push({ name: src, data: rendered.data });
-    stack.push({ layer, src, x: rendered.x, y: rendered.y });
-    size.width = Math.max(size.width, rendered.x + rendered.width);
-    size.height = Math.max(size.height, rendered.y + rendered.height);
+  // finally, not a trailing sweep: a rendering or encode throw must not leak.
+  try {
+    for (const [i, { layer, img }] of measured.entries()) {
+      const rendered = await renderLayer(layer, img.source, scale, box);
+      onProgress(++done, total);
+      if (!rendered) continue;
+      const src = `data/layer${i}.png`;
+      files.push({ name: src, data: rendered.data });
+      stack.push({ layer, src, x: rendered.x, y: rendered.y });
+      size.width = Math.max(size.width, rendered.x + rendered.width);
+      size.height = Math.max(size.height, rendered.y + rendered.height);
+    }
+  } finally {
+    closeAll();
   }
-  for (const { img } of measured) img.close();
   if (!stack.length) return null;
 
   // Only the layers that made it into the stack, so a skipped layer can't

@@ -71,7 +71,9 @@ export function Topbar() {
   // as a download that vanished. `runExport` turns it into a toast. The work
   // itself runs in lib/export.worker — the canvas stays live while it encodes.
   const onExportPng = async () => {
-    const blob = await exportPngOffThread(useDocument.getState().layers);
+    const blob = await exportPngOffThread(useDocument.getState().layers, (done, total) =>
+      setExportPct(Math.round((done / total) * 100)),
+    );
     if (!blob) throw new Error("Export failed: nothing visible to flatten");
     downloadBlob(blob, safeFilename(projectName, "png", "latteart"));
   };

@@ -33,10 +33,18 @@ export interface FlatResult {
  * crop away. With a box given, the output is exactly
  * `round(box.width × pixelRatio)` by `round(box.height × pixelRatio)` pixels, so
  * a caller can state a size up front and rely on getting it.
+ *
+ * `onProgress` ticks once per layer drawn — the export worker forwards it to
+ * the Export button's label.
  */
 export async function flattenLayers(
   layers: Layer[],
-  opts: { pixelRatio?: number; maxSide?: number; box?: Box } = {},
+  opts: {
+    pixelRatio?: number;
+    maxSide?: number;
+    box?: Box;
+    onProgress?: (done: number, total: number) => void;
+  } = {},
 ): Promise<FlatResult | null> {
   const visible = layers.filter((l) => l.visible && l.src);
   if (!visible.length) return null;
@@ -63,6 +71,7 @@ export async function flattenLayers(
   if (!ctx) return null;
   ctx.scale(scale, scale);
 
+  let done = 0;
   for (const l of visible) {
     // Masked through lib/layerMask, so an export and the on-screen canvas agree.
     // The mask has to resolve into the layer's own pixels *before* the layer
@@ -70,8 +79,12 @@ export async function flattenLayers(
     // sits beneath it too.
     const img = await loadMaskedLayer(l.src!, l.mask);
     if (!img) throw new Error("layer image failed to load");
-    drawPlaced(ctx, l, img.source, box);
-    img.close();
+    try {
+      drawPlaced(ctx, l, img.source, box);
+    } finally {
+      img.close();
+    }
+    opts.onProgress?.(++done, visible.length);
   }
 
   return { canvas, box };

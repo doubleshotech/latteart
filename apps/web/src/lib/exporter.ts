@@ -80,6 +80,9 @@ export function exportOraOffThread(
 }
 
 /** The flattened PNG export, run in the worker. Null = nothing visible. */
-export function exportPngOffThread(layers: Layer[]): Promise<Blob | null> {
-  return request((id) => ({ type: "png", id, layers, pixelRatio: 2 }));
+export function exportPngOffThread(
+  layers: Layer[],
+  onProgress?: ExportProgress,
+): Promise<Blob | null> {
+  return request((id) => ({ type: "png", id, layers }), onProgress);
 }

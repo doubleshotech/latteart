@@ -1,6 +1,6 @@
 import { imageKey } from "./imageKey";
 import { loadImage, naturalSize } from "./loadImage";
-import { context2d, decodeImage, makeRaster, pngDataUrl, type Raster } from "./raster";
+import { context2d, decodeImage, makeRaster, pngDataUrl, type Pixels, type Raster } from "./raster";
 
 /**
  * Layer masks — the compositing half.
@@ -180,16 +180,9 @@ export async function maskedImage(img: HTMLImageElement, mask: string): Promise<
   return (await composite(img, size, mask)) ?? img;
 }
 
-/** A layer's drawable pixels plus their size, from {@link loadMaskedLayer}.
- * `close` gives a decoded bitmap's memory back — a no-op when the pixels live
- * in a composite canvas instead. Call it once the pixels are drawn; the export
- * worker outlives the export, so leaked bitmaps stay resident there. */
-export interface LayerPixels {
-  source: CanvasImageSource;
-  width: number;
-  height: number;
-  close(): void;
-}
+/** A layer's drawable pixels from {@link loadMaskedLayer} — `lib/raster`'s
+ * {@link Pixels} shape. Call `close` once the pixels are drawn. */
+export type LayerPixels = Pixels;
 
 /** The masked composite for a possibly-unmasked layer: decodes `src`, applies
  * `mask` when there is one, falls back to the unmasked pixels when the mask
