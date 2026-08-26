@@ -1,6 +1,5 @@
-import { flattenLayers } from "./flatten";
+import { exportPng } from "./flatten";
 import { exportOra } from "./ora";
-import { encodePngBlob } from "./raster";
 import type { Layer } from "../stores/documentStore";
 
 /**
@@ -24,10 +23,6 @@ export type ExportRequest =
   | { type: "ora"; id: number; layers: Layer[] }
   | { type: "png"; id: number; layers: Layer[] };
 
-/** The PNG export's fixed supersample — the 2× the main-thread export always
- * used (`lib/ora` measures its scale instead; see `nativeScale` there). */
-const PNG_PIXEL_RATIO = 2;
-
 export type ExportResponse =
   /** Equal-weight pipeline steps — see `exportOra`'s onProgress. */
   | { type: "progress"; id: number; done: number; total: number }
@@ -47,26 +42,10 @@ function post(message: ExportResponse) {
   ctx.postMessage(message);
 }
 
-async function run(msg: ExportRequest): Promise<Blob | null> {
-  if (msg.type === "ora") {
-    return exportOra(msg.layers, (done, total) =>
-      post({ type: "progress", id: msg.id, done, total }),
-    );
-  }
-  // One step per layer drawn plus the final encode, which is the bulk of the
-  // wait — the same equal-weight honesty as exportOra's steps.
-  let steps = 0;
-  const flat = await flattenLayers(msg.layers, {
-    pixelRatio: PNG_PIXEL_RATIO,
-    onProgress: (done, total) => {
-      steps = total + 1;
-      post({ type: "progress", id: msg.id, done, total: steps });
-    },
-  });
-  if (!flat) return null;
-  const blob = await encodePngBlob(flat.canvas);
-  if (steps) post({ type: "progress", id: msg.id, done: steps, total: steps });
-  return blob;
+function run(msg: ExportRequest): Promise<Blob | null> {
+  const progress = (done: number, total: number) =>
+    post({ type: "progress", id: msg.id, done, total });
+  return msg.type === "ora" ? exportOra(msg.layers, progress) : exportPng(msg.layers, progress);
 }
 
 ctx.addEventListener("message", (ev: MessageEvent<ExportRequest>) => {

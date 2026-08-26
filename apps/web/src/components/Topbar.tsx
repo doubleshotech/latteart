@@ -70,18 +70,17 @@ export function Topbar() {
   // the button has already flipped to "Exporting…", so a silent return reads
   // as a download that vanished. `runExport` turns it into a toast. The work
   // itself runs in lib/export.worker — the canvas stays live while it encodes.
+  const exportProgress = (done: number, total: number) =>
+    setExportPct(Math.round((done / total) * 100));
+
   const onExportPng = async () => {
-    const blob = await exportPngOffThread(useDocument.getState().layers, (done, total) =>
-      setExportPct(Math.round((done / total) * 100)),
-    );
+    const blob = await exportPngOffThread(useDocument.getState().layers, exportProgress);
     if (!blob) throw new Error("Export failed: nothing visible to flatten");
     downloadBlob(blob, safeFilename(projectName, "png", "latteart"));
   };
 
   const onExportOra = async () => {
-    const blob = await exportOraOffThread(useDocument.getState().layers, (done, total) =>
-      setExportPct(Math.round((done / total) * 100)),
-    );
+    const blob = await exportOraOffThread(useDocument.getState().layers, exportProgress);
     if (!blob) throw new Error("Export failed: no layer has pixels yet");
     downloadBlob(blob, safeFilename(projectName, "ora", "latteart"));
   };

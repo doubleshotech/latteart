@@ -1,6 +1,6 @@
 import { oraCompositeOp } from "@latteart/shared";
 import { boundsOf, drawPlaced } from "./bounds";
-import { flattenLayers } from "./flatten";
+import { flattenLayers, type ExportProgress } from "./flatten";
 import { loadMaskedLayer } from "./layerMask";
 import { context2d, encodePng, makeRaster, type Raster } from "./raster";
 import { zip, type Bytes, type ZipEntry } from "./zip";
@@ -207,7 +207,7 @@ function stackXml(
  */
 export async function exportOra(
   layers: Layer[],
-  onProgress: (done: number, total: number) => void = () => {},
+  onProgress: ExportProgress = () => {},
 ): Promise<Blob | null> {
   const withPixels = layers.filter((l) => l.src);
   if (!withPixels.length) return null;

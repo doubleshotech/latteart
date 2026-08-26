@@ -1,7 +1,11 @@
 import { boundsOf, drawPlaced, type Box } from "./bounds";
 import { loadMaskedLayer } from "./layerMask";
-import { context2d, makeRaster, type Raster } from "./raster";
+import { context2d, encodePngBlob, makeRaster, type Raster } from "./raster";
 import type { Layer } from "../stores/documentStore";
+
+/** Progress reporting for the exporters: `done` of `total` equal-weight steps.
+ * The export worker forwards these to the Export button's label. */
+export type ExportProgress = (done: number, total: number) => void;
 
 export interface FlatResult {
   /**
@@ -18,10 +22,10 @@ export interface FlatResult {
 }
 
 /**
- * Composite the visible layers (bottom→top = array order) into a single PNG.
+ * Composite the visible layers (bottom→top = array order) into a single canvas.
  * Pure raster — draws each layer's src at its geometry (position, size, rotation,
  * opacity, blend mode, mask) onto an offscreen canvas, independent of the current
- * zoom/pan and without the canvas chrome (shadows, selection). Returns the data URL
+ * zoom/pan and without the canvas chrome (shadows, selection). Returns the canvas
  * plus the merged bounding box so callers can place the result exactly over the source.
  *
  * `maxSide` caps the longest output edge (keeps the AI-merge payload bounded);
@@ -43,7 +47,7 @@ export async function flattenLayers(
     pixelRatio?: number;
     maxSide?: number;
     box?: Box;
-    onProgress?: (done: number, total: number) => void;
+    onProgress?: ExportProgress;
   } = {},
 ): Promise<FlatResult | null> {
   const visible = layers.filter((l) => l.visible && l.src);
@@ -88,4 +92,35 @@ export async function flattenLayers(
   }
 
   return { canvas, box };
+}
+
+/** The PNG export's fixed supersample — a screen-resolution canvas exported at
+ * document quality. (`lib/ora` measures its scale instead; see `nativeScale`
+ * there.) */
+const PNG_PIXEL_RATIO = 2;
+
+/**
+ * The "Export → PNG" pipeline: the visible layers flattened at
+ * {@link PNG_PIXEL_RATIO} and encoded, or null when nothing is visible.
+ * `exportOra`'s sibling — environment-neutral, run by `lib/export.worker` in
+ * the app but callable on the main thread by construction. Progress is one
+ * step per layer drawn plus the final encode, which is the bulk of the wait —
+ * the same equal-weight honesty as `exportOra`'s steps.
+ */
+export async function exportPng(
+  layers: Layer[],
+  onProgress: ExportProgress = () => {},
+): Promise<Blob | null> {
+  let steps = 0;
+  const flat = await flattenLayers(layers, {
+    pixelRatio: PNG_PIXEL_RATIO,
+    onProgress: (done, total) => {
+      steps = total + 1;
+      onProgress(done, steps);
+    },
+  });
+  if (!flat) return null;
+  const blob = await encodePngBlob(flat.canvas);
+  if (steps) onProgress(steps, steps);
+  return blob;
 }

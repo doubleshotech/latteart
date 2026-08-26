@@ -1,19 +1,20 @@
 import type { ExportRequest, ExportResponse } from "./export.worker";
+import type { ExportProgress } from "./flatten";
 import type { Layer } from "../stores/documentStore";
 
 /**
  * Main-thread client for the export worker — the same RPC shape as
- * `removeBackgroundAI` in front of the segmentation worker. The pipeline and
- * its PNG encoding live in `lib/export.worker`; this file ships the layer list
- * over and hands back the finished `Blob`.
+ * `removeBackgroundAI` in front of the segmentation worker. The pipelines
+ * (`exportOra`, `exportPng`) run in `lib/export.worker`; this file ships the
+ * layer list over and hands back the finished `Blob`.
  *
- * Deliberately no main-thread fallback: `exportOra` is still callable here by
- * construction, but a worker that can't start is exotic enough (module workers
- * exist everywhere this app runs) that surfacing the error beats silently
- * re-freezing the UI for twelve seconds.
+ * Deliberately no main-thread fallback: both pipelines are still callable here
+ * by construction, but a worker that can't start is exotic enough (module
+ * workers exist everywhere this app runs) that surfacing the error beats
+ * silently re-freezing the UI for twelve seconds.
  */
 
-export type ExportProgress = (done: number, total: number) => void;
+export type { ExportProgress } from "./flatten";
 
 interface Pending {
   resolve: (blob: Blob | null) => void;

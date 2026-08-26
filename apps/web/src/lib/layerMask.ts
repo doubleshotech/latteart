@@ -17,17 +17,19 @@ import { context2d, decodeImage, makeRaster, pngDataUrl, type Pixels, type Raste
  * thing worth caching: it's a full pixel walk, while applying a cached stencil is
  * two `drawImage` calls.
  *
- * Every renderer goes through {@link maskedImage} — the Konva canvas
- * (via `useMaskedImage`), `lib/flatten` (AI Merge + export) and `lib/thumbnail`
- * (switcher previews) — so a masked layer looks the same on screen, in an export
- * and in its project's preview. {@link maskedSource} extends that to everything
- * leaving the app: the pixels an AI action sends a provider are the composite
- * too, so the model works on the image the user is looking at.
+ * Every renderer resolves its mask through the one `composite` below — the
+ * Konva canvas via {@link maskedImage}, `lib/flatten` (AI Merge + export) and
+ * `lib/thumbnail` via {@link loadMaskedLayer} — so a masked layer looks the
+ * same on screen, in an export and in its project's preview.
+ * {@link maskedSource} extends that to everything leaving the app: the pixels
+ * an AI action sends a provider are the composite too, so the model works on
+ * the image the user is looking at.
  *
- * The compositing core (stencil build, {@link loadMaskedLayer}) goes through
- * `lib/raster` and runs in the export worker as well as on the main thread.
- * The helpers below it (`maskedSource`, `expandMask`, `invertMask`,
- * `masksAnything`) are main-thread-only and keep using the DOM directly.
+ * The compositing core (stencil build, `composite`, {@link loadMaskedLayer})
+ * goes through `lib/raster` and runs in the export worker as well as on the
+ * main thread. The helpers around it (`maskedImage`, `maskedSource`,
+ * `expandMask`, `invertMask`, `masksAnything`) are main-thread-only — they
+ * take or hand back DOM types.
  */
 
 /**
@@ -153,31 +155,30 @@ function stencilFor(mask: string): Promise<Raster | null> {
  * that re-render often memoize the result instead.
  */
 async function composite(
-  img: CanvasImageSource,
-  size: { w: number; h: number },
+  px: Pick<Pixels, "source" | "width" | "height">,
   mask: string,
 ): Promise<Raster | null> {
   const stencil = await stencilFor(mask);
   if (!stencil) return null;
 
-  const canvas = makeRaster(size.w, size.h);
+  const canvas = makeRaster(px.width, px.height);
   const ctx = context2d(canvas);
   if (!ctx) return null;
 
-  ctx.drawImage(img, 0, 0, size.w, size.h);
+  ctx.drawImage(px.source, 0, 0, px.width, px.height);
   ctx.globalCompositeOperation = "destination-in";
-  ctx.drawImage(stencil, 0, 0, size.w, size.h);
+  ctx.drawImage(stencil, 0, 0, px.width, px.height);
   return canvas;
 }
 
 /**
- * The layer's pixels with its mask applied, as a drawable — the renderers' entry
- * point. Falls back to the image untouched when the mask can't be applied.
+ * The layer's pixels with its mask applied, as a drawable — the Konva canvas's
+ * entry point. Falls back to the image untouched when the mask can't be applied.
  */
 export async function maskedImage(img: HTMLImageElement, mask: string): Promise<CanvasImageSource> {
   const size = naturalSize(img);
   if (!size) return img;
-  return (await composite(img, size, mask)) ?? img;
+  return (await composite({ source: img, width: size.w, height: size.h }, mask)) ?? img;
 }
 
 /** A layer's drawable pixels from {@link loadMaskedLayer} — `lib/raster`'s
@@ -196,7 +197,15 @@ export async function loadMaskedLayer(
   const img = await decodeImage(src);
   if (!img) return null;
   if (!mask) return img;
-  const out = await composite(img.source, { w: img.width, h: img.height }, mask);
+  let out: Raster | null;
+  try {
+    out = await composite(img, mask);
+  } catch (err) {
+    // The decoded bitmap is this function's to give back on every exit — a
+    // caller that catches the throw never saw it.
+    img.close();
+    throw err;
+  }
   if (!out) return img;
   img.close();
   return { source: out, width: out.width, height: out.height, close: () => {} };
@@ -223,7 +232,7 @@ export async function maskedSource(
   const img = await loadImage(src);
   const size = naturalSize(img);
   if (!img || !size) return null;
-  const out = await composite(img, size, mask);
+  const out = await composite({ source: img, width: size.w, height: size.h }, mask);
   return out ? pngDataUrl(out) : null;
 }
 
