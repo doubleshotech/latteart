@@ -1,8 +1,8 @@
 import { oraCompositeOp } from "@latteart/shared";
 import { boundsOf, drawPlaced } from "./bounds";
-import { flattenLayers } from "./flatten";
-import { naturalSize } from "./loadImage";
+import { flattenLayers, type ExportProgress } from "./flatten";
 import { loadMaskedLayer } from "./layerMask";
+import { context2d, encodePng, makeRaster, type Raster } from "./raster";
 import { zip, type Bytes, type ZipEntry } from "./zip";
 import type { Layer } from "../stores/documentStore";
 
@@ -76,17 +76,6 @@ function escapeXml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
-/** The pixel dimensions of a drawable. `loadMaskedLayer` hands back the image
- * itself when a layer has no mask and a canvas when it does, and the two spell
- * their size differently. */
-function pixelSize(img: CanvasImageSource): { w: number; h: number } | null {
-  if (img instanceof HTMLImageElement) return naturalSize(img);
-  if (img instanceof HTMLCanvasElement) {
-    return img.width && img.height ? { w: img.width, h: img.height } : null;
-  }
-  return null;
-}
-
 /**
  * How much to supersample the document so no layer is exported below its own
  * resolution.
@@ -122,20 +111,6 @@ function nativeScale(measured: { layer: Layer; size: { w: number; h: number } }[
   return Math.min(ratio, MAX_SCALE);
 }
 
-/** A canvas as PNG bytes. */
-async function pngBytes(canvas: HTMLCanvasElement): Promise<Bytes> {
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
-  if (!blob) throw new Error("could not encode a PNG");
-  return new Uint8Array(await blob.arrayBuffer());
-}
-
-function makeCanvas(width: number, height: number): HTMLCanvasElement {
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, width);
-  canvas.height = Math.max(1, height);
-  return canvas;
-}
-
 /** A layer rendered into its own axis-aligned PNG, plus where that PNG sits in
  * the document. Opacity and blend mode are left out on purpose — they ride in
  * `stack.xml`, where an editor can still change them. */
@@ -148,8 +123,8 @@ async function renderLayer(
   const hull = boundsOf([layer]);
   if (!hull) return null;
 
-  const canvas = makeCanvas(Math.round(hull.width * scale), Math.round(hull.height * scale));
-  const ctx = canvas.getContext("2d");
+  const canvas = makeRaster(Math.round(hull.width * scale), Math.round(hull.height * scale));
+  const ctx = context2d(canvas);
   if (!ctx) return null;
 
   ctx.scale(scale, scale);
@@ -160,7 +135,7 @@ async function renderLayer(
   drawPlaced(ctx, layer, img, hull, { bare: true });
 
   return {
-    data: await pngBytes(canvas),
+    data: await encodePng(canvas),
     x: Math.round((hull.x - origin.x) * scale),
     y: Math.round((hull.y - origin.y) * scale),
     width: canvas.width,
@@ -176,9 +151,9 @@ async function renderMerged(
   box: { x: number; y: number; width: number; height: number },
   scale: number,
   size: { width: number; height: number },
-): Promise<HTMLCanvasElement> {
+): Promise<Raster> {
   const flat = await flattenLayers(layers, { box, pixelRatio: scale });
-  return flat?.canvas ?? makeCanvas(size.width, size.height);
+  return flat?.canvas ?? makeRaster(size.width, size.height);
 }
 
 function stackXml(
@@ -214,6 +189,12 @@ function stackXml(
  * Export the document as an OpenRaster file, or null when there is nothing to
  * export (no layer holds pixels yet).
  *
+ * Environment-neutral through `lib/raster` — in the app this runs inside
+ * `lib/export.worker`, because PNG-encoding a large document is seconds of
+ * synchronous work that used to freeze the canvas. `onProgress` reports
+ * equal-weight steps (one per layer, plus the merged image and the thumbnail)
+ * for the export button's label.
+ *
  * Layers whose image fails to decode are skipped rather than failing the export
  * — the same call every compositor here makes: a broken layer shouldn't cost
  * the user the other nine.
@@ -224,7 +205,10 @@ function stackXml(
  * disabled while the generation store is busy — this reads a document, it
  * doesn't police when one is readable.
  */
-export async function exportOra(layers: Layer[]): Promise<Blob | null> {
+export async function exportOra(
+  layers: Layer[],
+  onProgress: ExportProgress = () => {},
+): Promise<Blob | null> {
   const withPixels = layers.filter((l) => l.src);
   if (!withPixels.length) return null;
 
@@ -235,13 +219,21 @@ export async function exportOra(layers: Layer[]): Promise<Blob | null> {
   );
   const measured = withPixels.flatMap((layer, i) => {
     const img = images[i];
-    const size = img ? pixelSize(img) : null;
-    return img && size ? [{ layer, img, size }] : [];
+    return img ? [{ layer, img, size: { w: img.width, h: img.height } }] : [];
   });
   if (!measured.length) return null;
 
+  // Every exit from here on has to give the decoded bitmaps back — a leaked
+  // one stays resident in the worker, which outlives the export.
+  const closeAll = () => {
+    for (const { img } of measured) img.close();
+  };
+
   const box = boundsOf(measured.map((m) => m.layer));
-  if (!box || !(box.width > 0) || !(box.height > 0)) return null;
+  if (!box || !(box.width > 0) || !(box.height > 0)) {
+    closeAll();
+    return null;
+  }
 
   let scale = nativeScale(measured);
   const longest = Math.max(box.width, box.height) * scale;
@@ -259,14 +251,25 @@ export async function exportOra(layers: Layer[]): Promise<Blob | null> {
     width: Math.max(1, Math.round(box.width * scale)),
     height: Math.max(1, Math.round(box.height * scale)),
   };
-  for (const [i, { layer, img }] of measured.entries()) {
-    const rendered = await renderLayer(layer, img, scale, box);
-    if (!rendered) continue;
-    const src = `data/layer${i}.png`;
-    files.push({ name: src, data: rendered.data });
-    stack.push({ layer, src, x: rendered.x, y: rendered.y });
-    size.width = Math.max(size.width, rendered.x + rendered.width);
-    size.height = Math.max(size.height, rendered.y + rendered.height);
+  // One step per layer plus the merged image and the thumbnail. Equal-weight,
+  // so the merged image — one step — understates its real share on a large
+  // document; honest enough for a button label.
+  const total = measured.length + 2;
+  let done = 0;
+  // finally, not a trailing sweep: a rendering or encode throw must not leak.
+  try {
+    for (const [i, { layer, img }] of measured.entries()) {
+      const rendered = await renderLayer(layer, img.source, scale, box);
+      onProgress(++done, total);
+      if (!rendered) continue;
+      const src = `data/layer${i}.png`;
+      files.push({ name: src, data: rendered.data });
+      stack.push({ layer, src, x: rendered.x, y: rendered.y });
+      size.width = Math.max(size.width, rendered.x + rendered.width);
+      size.height = Math.max(size.height, rendered.y + rendered.height);
+    }
+  } finally {
+    closeAll();
   }
   if (!stack.length) return null;
 
@@ -283,12 +286,17 @@ export async function exportOra(layers: Layer[]): Promise<Blob | null> {
     size,
   );
 
+  const mergedPng = await encodePng(merged);
+  onProgress(++done, total);
+
   const thumbScale = Math.min(1, THUMB_MAX / Math.max(size.width, size.height));
-  const thumb = makeCanvas(
+  const thumb = makeRaster(
     Math.round(size.width * thumbScale),
     Math.round(size.height * thumbScale),
   );
-  thumb.getContext("2d")?.drawImage(merged, 0, 0, thumb.width, thumb.height);
+  context2d(thumb)?.drawImage(merged, 0, 0, thumb.width, thumb.height);
+  const thumbPng = await encodePng(thumb);
+  onProgress(++done, total);
 
   return zip(
     [
@@ -296,8 +304,8 @@ export async function exportOra(layers: Layer[]): Promise<Blob | null> {
       { name: "mimetype", data: new TextEncoder().encode("image/openraster") },
       { name: "stack.xml", data: new TextEncoder().encode(stackXml(size, stack)) },
       ...files,
-      { name: "mergedimage.png", data: await pngBytes(merged) },
-      { name: "Thumbnails/thumbnail.png", data: await pngBytes(thumb) },
+      { name: "mergedimage.png", data: mergedPng },
+      { name: "Thumbnails/thumbnail.png", data: thumbPng },
     ],
     "image/openraster",
   );
