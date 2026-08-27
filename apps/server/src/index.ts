@@ -506,8 +506,11 @@ const routes = app
 
   // Rename a custom style and/or edit its descriptor. Omitted fields keep
   // their value; a provided-but-empty label or prompt is rejected rather than
-  // silently replaced (create derives a default label, update must not).
+  // silently replaced (create derives a default label, update must not), and a
+  // body with no recognized field at all — malformed JSON included — is a 400,
+  // not a 200 that quietly rewrites the manifest.
   .patch("/api/styles/:id", async (c) => {
+    if (!getStyleDetail(c.req.param("id"))) return c.json({ error: "no such style" }, 404);
     const body = await c.req
       .json<Partial<UpdateStyleApiRequest>>()
       .catch(() => ({}) as Partial<UpdateStyleApiRequest>);
@@ -524,6 +527,7 @@ const routes = app
     }
     if (body.negativePrompt !== undefined)
       patch.negativePrompt = String(body.negativePrompt).trim();
+    if (Object.keys(patch).length === 0) return c.json({ error: "nothing to update" }, 400);
     const info = updateStyle(c.req.param("id"), patch);
     if (!info) return c.json({ error: "no such style" }, 404);
     return c.json(info);

@@ -8,8 +8,9 @@ import { client } from "./client";
 
 /**
  * Custom-style library calls against the local backend. The list GET uses the
- * typed Hono RPC client; the mutations use plain fetch (like the keystore
- * mutations) so we can shape a friendly error message from the JSON body.
+ * typed Hono RPC client; the per-style GET and the mutations use plain fetch
+ * (like the keystore mutations) so we can shape a friendly error message from
+ * the JSON body.
  */
 
 export async function fetchStyles(): Promise<CustomStyleInfo[]> {

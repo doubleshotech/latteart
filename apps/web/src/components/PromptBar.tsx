@@ -82,6 +82,22 @@ const iconBtn: React.CSSProperties = {
   flex: "none",
 };
 
+/** Tiny per-row action button inside a style picker row (edit / delete). */
+const rowIconBtn: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 22,
+  height: 22,
+  flex: "none",
+  padding: 0,
+  borderRadius: 5,
+  background: "transparent",
+  border: "none",
+  color: "var(--text-faint)",
+  cursor: "pointer",
+};
+
 function jobIcon(kind: QueuedJob["kind"]) {
   if (kind === "generate") return Sparkles;
   if (kind === "merge") return Layers;
@@ -667,20 +683,7 @@ export function PromptBar() {
                       setStyleMenuOpen(false);
                       setTimeout(() => setEditingStyleId(s.id), 0);
                     }}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: 22,
-                      height: 22,
-                      flex: "none",
-                      padding: 0,
-                      borderRadius: 5,
-                      background: "transparent",
-                      border: "none",
-                      color: "var(--text-faint)",
-                      cursor: "pointer",
-                    }}
+                    style={rowIconBtn}
                   >
                     <Pencil size={13} strokeWidth={1.8} />
                   </button>
@@ -694,20 +697,7 @@ export function PromptBar() {
                       e.stopPropagation();
                       deleteStyle(s.id);
                     }}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: 22,
-                      height: 22,
-                      flex: "none",
-                      padding: 0,
-                      borderRadius: 5,
-                      background: "transparent",
-                      border: "none",
-                      color: "var(--text-faint)",
-                      cursor: "pointer",
-                    }}
+                    style={rowIconBtn}
                   >
                     <Trash2 size={13} strokeWidth={1.8} />
                   </button>
