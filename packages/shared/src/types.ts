@@ -346,7 +346,9 @@ export interface CustomStyle {
 
 /**
  * Public description of a custom style for the picker — the label, thumbnail,
- * and provenance, but not the descriptor text (composition stays server-side).
+ * and provenance, but not the descriptor text. Composition stays server-side;
+ * the descriptor is exposed only per-style via {@link CustomStyleDetail} when
+ * the user opens it for editing.
  */
 export interface CustomStyleInfo {
   id: string;
@@ -354,6 +356,15 @@ export interface CustomStyleInfo {
   thumbnail?: string;
   source: StyleSource;
   createdAt: number;
+}
+
+/**
+ * One style with its descriptor text, for the edit dialog (`GET
+ * /api/styles/:id`). The list payload stays descriptor-free on purpose.
+ */
+export interface CustomStyleDetail extends CustomStyleInfo {
+  prompt: string;
+  negativePrompt?: string;
 }
 
 /**
@@ -383,4 +394,16 @@ export interface CreateStyleApiRequest {
   thumbnail?: string;
   /** Optional explicit LLM provider id; omitted → the server picks the best available. */
   providerId?: string;
+}
+
+/**
+ * Request body for `PATCH /api/styles/:id` — rename a custom style and/or edit
+ * its descriptor text. Omitted fields keep their current value. `label` and
+ * `prompt` must be non-empty when provided; `negativePrompt` may be `""` to
+ * clear the negatives.
+ */
+export interface UpdateStyleApiRequest {
+  label?: string;
+  prompt?: string;
+  negativePrompt?: string;
 }

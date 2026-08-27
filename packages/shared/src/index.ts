@@ -24,8 +24,10 @@ export type {
   StyleSource,
   CustomStyle,
   CustomStyleInfo,
+  CustomStyleDetail,
   PaletteHint,
   CreateStyleApiRequest,
+  UpdateStyleApiRequest,
 } from "./types.ts";
 
 export type { StylePreset, StyleFragment } from "./styles.ts";

@@ -5,6 +5,7 @@ import {
   ImagePlus,
   Layers,
   Palette,
+  Pencil,
   Scissors,
   Sparkles,
   Trash2,
@@ -22,6 +23,7 @@ import { useSegmentLabel } from "../stores/segmentStore";
 import { SIZE_PRESETS, useSession } from "../stores/sessionStore";
 import { useStyles } from "../stores/stylesStore";
 import { useViewport } from "../stores/viewportStore";
+import { EditStyleDialog } from "./EditStyleDialog";
 import { NewStyleDialog } from "./NewStyleDialog";
 
 /** How far the bar floats above the bottom of the canvas. Reported to the
@@ -358,6 +360,12 @@ export function PromptBar() {
   const [focused, setFocused] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
   const [styleDialogOpen, setStyleDialogOpen] = useState(false);
+  // The custom style being edited (rename + descriptor); null = dialog closed.
+  const [editingStyleId, setEditingStyleId] = useState<string | null>(null);
+  // Controlled so the pencil button can close the menu — its click deliberately
+  // does not select the row, so Radix would otherwise leave the menu open
+  // stranded behind the edit dialog.
+  const [styleMenuOpen, setStyleMenuOpen] = useState(false);
   // The pre-enhance draft, so a single tap reverts. Cleared once the user edits.
   const [preEnhance, setPreEnhance] = useState<string | null>(null);
   const enhanceCtl = useRef<AbortController | null>(null);
@@ -568,7 +576,7 @@ export function PromptBar() {
         </DropdownMenu.Root>
 
         {/* style picker */}
-        <DropdownMenu.Root>
+        <DropdownMenu.Root open={styleMenuOpen} onOpenChange={setStyleMenuOpen}>
           <DropdownMenu.Trigger asChild>
             <button type="button" style={pillBtn}>
               <Palette size={13} strokeWidth={1.9} color="var(--text-faint)" />
@@ -645,6 +653,37 @@ export function PromptBar() {
                   >
                     {s.label}
                   </span>
+                  <button
+                    type="button"
+                    aria-label={`Edit ${s.label}`}
+                    title="Edit style"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      // Close the menu first, then open on the next tick so the
+                      // dialog's focus trap doesn't race the menu restoring
+                      // focus to the trigger (same shape as ProjectMenu).
+                      setStyleMenuOpen(false);
+                      setTimeout(() => setEditingStyleId(s.id), 0);
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 22,
+                      height: 22,
+                      flex: "none",
+                      padding: 0,
+                      borderRadius: 5,
+                      background: "transparent",
+                      border: "none",
+                      color: "var(--text-faint)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <Pencil size={13} strokeWidth={1.8} />
+                  </button>
                   <button
                     type="button"
                     aria-label={`Delete ${s.label}`}
@@ -756,6 +795,13 @@ export function PromptBar() {
         open={styleDialogOpen}
         onOpenChange={setStyleDialogOpen}
         onCreated={(info) => setStyle(info.id)}
+      />
+
+      <EditStyleDialog
+        styleId={editingStyleId}
+        onOpenChange={(open) => {
+          if (!open) setEditingStyleId(null);
+        }}
       />
     </div>
   );
