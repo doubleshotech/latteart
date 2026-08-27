@@ -6,15 +6,17 @@ import assert from "node:assert/strict";
 import { bytesOf, readArchive } from "./testenv/archive.ts";
 import {
   bitmapLog,
+  GARBAGE_PNG as GARBAGE,
+  halfMask,
   installWorkerCanvas,
   pixelsOf,
-  pngUrl,
   POISON_SRC,
   px,
   resetBitmapLog,
   solidUrl,
 } from "./testenv/canvas.ts";
 import { layer } from "./testenv/layers.ts";
+import { clearMaskStencils } from "./layerMask.ts";
 import { exportOra } from "./ora.ts";
 import type { Layer } from "../stores/documentStore";
 
@@ -27,8 +29,6 @@ installWorkerCanvas();
  * literals; the pixel checks stay on alpha 0/255 and solid colors, where the
  * rasterizer is exact.
  */
-
-const GARBAGE = "data:image/png;base64,AAAA";
 
 /** Every layer-attribute record in stack.xml, in document order (topmost first). */
 function layerAttrs(xml: string): Record<string, string>[] {
@@ -204,13 +204,9 @@ describe("exportOra — placement", () => {
 
 describe("exportOra — baked pixels", () => {
   it("bakes a layer mask into the exported alpha", async () => {
-    const mask = pngUrl(4, 4, (ctx) => {
-      ctx.fillStyle = "#fff";
-      ctx.fillRect(0, 0, 2, 4);
-      ctx.fillStyle = "#000";
-      ctx.fillRect(2, 0, 2, 4);
-    });
-    const out = await exportAndRead([layer({ src: solidUrl(4, 4, "#12ab34"), mask })]);
+    const out = await exportAndRead([
+      layer({ src: solidUrl(4, 4, "#12ab34"), mask: halfMask(4, 4) }),
+    ]);
 
     const png = await pixelsOf(out.byName.get("data/layer0.png")!.data);
     assert.deepEqual(px(png, 0, 1), [18, 171, 52, 255], "revealed half survives");
@@ -283,22 +279,27 @@ describe("exportOra — hidden and broken layers", () => {
 describe("exportOra — resource hygiene and progress", () => {
   it("closes every decoded bitmap on success", async () => {
     resetBitmapLog();
+    clearMaskStencils();
     await exportAndRead([
       layer({ src: solidUrl(4, 4, "#fff"), mask: solidUrl(4, 4, "#fff") }),
       layer({ src: solidUrl(4, 4, "#000") }),
     ]);
-    assert.ok(bitmapLog.length >= 3);
+    // Exactly src + mask + src up front, then both sources again for the
+    // merged image; the mask's stencil is cached, so it never re-decodes.
+    assert.equal(bitmapLog.length, 5);
     for (const [i, b] of bitmapLog.entries()) assert.equal(b.closed, true, `bitmap ${i} closed`);
   });
 
   it("closes every decoded bitmap when rendering throws mid-export", async () => {
     resetBitmapLog();
+    clearMaskStencils();
     // The poisoned layer decodes fine and explodes at draw time — the worker
     // outlives the export, so a leak here is permanent.
     await assert.rejects(
       exportOra([layer({ src: solidUrl(4, 4, "#fff") }), layer({ src: POISON_SRC })]),
     );
-    assert.ok(bitmapLog.length >= 2);
+    // Both sources decoded; the poison throw stops the export before merging.
+    assert.equal(bitmapLog.length, 2);
     for (const [i, b] of bitmapLog.entries()) assert.equal(b.closed, true, `bitmap ${i} closed`);
   });
 

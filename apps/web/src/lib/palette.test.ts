@@ -3,15 +3,20 @@
 /* eslint-disable @typescript-eslint/no-floating-promises */
 import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { installDom, pixelsOf, pngUrl, removeDom, solidUrl } from "./testenv/canvas.ts";
+import {
+  GARBAGE_PNG as GARBAGE,
+  installDom,
+  pixelsOf,
+  pngUrl,
+  removeDom,
+  solidUrl,
+} from "./testenv/canvas.ts";
 import { extractPaletteHint, makeThumbnail } from "./palette.ts";
 
 installDom();
 after(() => removeDom());
 
-const GARBAGE = "data:image/png;base64,AAAA";
-
-const close = (actual: number, expected: number, what: string) =>
+const assertClose = (actual: number, expected: number, what: string) =>
   assert.ok(Math.abs(actual - expected) < 1e-9, `${what}: ${actual} !== ~${expected}`);
 
 describe("extractPaletteHint", () => {
@@ -19,7 +24,7 @@ describe("extractPaletteHint", () => {
     const hint = await extractPaletteHint([solidUrl(8, 8, "#ff0000")]);
     // (255,0,0) → bucket (7,0,0) → centre (7·32+16, 16, 16) = #f01010.
     assert.deepEqual(hint.colors, ["#f01010"]);
-    close(hint.brightness, 0.2126, "brightness of pure red");
+    assertClose(hint.brightness, 0.2126, "brightness of pure red");
     assert.equal(hint.saturation, 1, "pure red is fully saturated");
   });
 
@@ -31,7 +36,7 @@ describe("extractPaletteHint", () => {
 
     const white = await extractPaletteHint([solidUrl(4, 4, "#ffffff")]);
     assert.deepEqual(white.colors, ["#f0f0f0"]);
-    close(white.brightness, 1, "brightness of white");
+    assertClose(white.brightness, 1, "brightness of white");
     assert.equal(white.saturation, 0);
   });
 

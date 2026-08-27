@@ -3,11 +3,15 @@
 /* eslint-disable @typescript-eslint/no-floating-promises */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { after, before } from "node:test";
 import {
   bitmapLog,
+  GARBAGE_PNG,
+  installDom,
   installWorkerCanvas,
   pixelsOf,
   px,
+  removeDom,
   resetBitmapLog,
   solidUrl,
 } from "./testenv/canvas.ts";
@@ -52,7 +56,7 @@ describe("raster — decodeImage", () => {
   });
 
   it("resolves null on undecodable bytes", async () => {
-    assert.equal(await decodeImage("data:image/png;base64,AAAA"), null);
+    assert.equal(await decodeImage(GARBAGE_PNG), null);
   });
 
   it("resolves null when the fetch itself throws", async () => {
@@ -99,5 +103,27 @@ describe("raster — PNG encoding", () => {
     assert.ok(url.startsWith("data:image/png;base64,"), `unexpected prefix: ${url.slice(0, 30)}`);
     const p = await pixelsOf(url);
     assert.deepEqual(px(p, 0, 0), [255, 0, 0, 255]);
+  });
+});
+
+describe("raster — DOM environment", () => {
+  before(() => installDom());
+  after(() => removeDom());
+
+  it("builds a document canvas and encodePng takes the toBlob fallback", async () => {
+    const raster = makeRaster(2, 1);
+    // A DOM canvas has toDataURL and toBlob but no convertToBlob, so this is
+    // the one place encodePngBlob's callback-style fallback branch runs.
+    assert.equal("toDataURL" in raster, true);
+    assert.equal("convertToBlob" in raster, false);
+    const ctx = context2d(raster)!;
+    ctx.fillStyle = "#12ab34";
+    ctx.fillRect(0, 0, 2, 1);
+
+    const bytes = await encodePng(raster);
+    assert.deepEqual(Array.from(bytes.slice(0, 4)), [137, 80, 78, 71]);
+    const p = await pixelsOf(bytes);
+    assert.equal(p.width, 2);
+    assert.deepEqual(px(p, 1, 0), [18, 171, 52, 255]);
   });
 });

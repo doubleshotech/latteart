@@ -5,16 +5,18 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   bitmapLog,
+  GARBAGE_PNG,
+  halfMask,
   installWorkerCanvas,
   pixelsOf,
   pixelsOfRaster,
-  pngUrl,
   px,
   resetBitmapLog,
   solidUrl,
 } from "./testenv/canvas.ts";
 import { layer } from "./testenv/layers.ts";
 import { exportPng, flattenLayers } from "./flatten.ts";
+import { clearMaskStencils } from "./layerMask.ts";
 
 installWorkerCanvas();
 
@@ -36,7 +38,7 @@ describe("flattenLayers — nothing to composite", () => {
 
   it("throws when a visible layer's pixels won't decode", async () => {
     await assert.rejects(
-      flattenLayers([layer({ src: "data:image/png;base64,AAAA" })]),
+      flattenLayers([layer({ src: GARBAGE_PNG })]),
       /layer image failed to load/,
     );
   });
@@ -167,14 +169,8 @@ describe("flattenLayers — compositing", () => {
   });
 
   it("resolves a layer's mask into its own alpha", async () => {
-    const mask = pngUrl(4, 4, (ctx) => {
-      ctx.fillStyle = "#fff";
-      ctx.fillRect(0, 0, 2, 4);
-      ctx.fillStyle = "#000";
-      ctx.fillRect(2, 0, 2, 4);
-    });
     const flat = await flattenLayers(
-      [layer({ src: solidUrl(4, 4, "#12ab34"), width: 4, height: 4, mask })],
+      [layer({ src: solidUrl(4, 4, "#12ab34"), width: 4, height: 4, mask: halfMask(4, 4) })],
       { pixelRatio: 1 },
     );
     assert.ok(flat);
@@ -185,6 +181,7 @@ describe("flattenLayers — compositing", () => {
 
   it("gives every decoded bitmap back", async () => {
     resetBitmapLog();
+    clearMaskStencils();
     const flat = await flattenLayers(
       [
         layer({ src: solidUrl(4, 4, "#fff"), mask: solidUrl(4, 4, "#fff") }),
@@ -193,7 +190,8 @@ describe("flattenLayers — compositing", () => {
       { pixelRatio: 1 },
     );
     assert.ok(flat);
-    assert.ok(bitmapLog.length >= 3, "src+mask+src bitmaps were decoded");
+    // Exactly src + mask + src — the cleared stencil cache makes it exact.
+    assert.equal(bitmapLog.length, 3);
     for (const [i, b] of bitmapLog.entries()) assert.equal(b.closed, true, `bitmap ${i} closed`);
   });
 

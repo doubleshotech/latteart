@@ -3,7 +3,15 @@
 /* eslint-disable @typescript-eslint/no-floating-promises */
 import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { installDom, pixelsOf, pngUrl, px, removeDom, solidUrl } from "./testenv/canvas.ts";
+import {
+  GARBAGE_PNG,
+  halfMask,
+  installDom,
+  pixelsOf,
+  px,
+  removeDom,
+  solidUrl,
+} from "./testenv/canvas.ts";
 import { layer } from "./testenv/layers.ts";
 import { clearMaskStencils } from "./layerMask.ts";
 import { buildOutpaintAssets, type Dirs } from "./outpaint.ts";
@@ -107,13 +115,12 @@ describe("buildOutpaintAssets — geometry", () => {
 describe("buildOutpaintAssets — masked sources", () => {
   it("sends the masked composite and re-places the mask on the result", async () => {
     // Source 4×4 with its right half hidden; expand to the right by half.
-    const mask = pngUrl(4, 4, (ctx) => {
-      ctx.fillStyle = "#fff";
-      ctx.fillRect(0, 0, 2, 4);
-      ctx.fillStyle = "#000";
-      ctx.fillRect(2, 0, 2, 4);
+    const source = layer({
+      src: solidUrl(4, 4, "#12ab34"),
+      mask: halfMask(4, 4),
+      width: 4,
+      height: 4,
     });
-    const source = layer({ src: solidUrl(4, 4, "#12ab34"), mask, width: 4, height: 4 });
     const out = await buildOutpaintAssets(source, dirs({ right: true }), 0.5);
 
     assert.equal(out.genWidth, 6);
@@ -134,7 +141,7 @@ describe("buildOutpaintAssets — masked sources", () => {
 
 describe("buildOutpaintAssets — failure", () => {
   it("rejects when the source image can't load", async () => {
-    const source = layer({ src: "data:image/png;base64,AAAA" });
+    const source = layer({ src: GARBAGE_PNG });
     await assert.rejects(
       buildOutpaintAssets(source, dirs({ right: true }), 0.5),
       /source image failed to load/,

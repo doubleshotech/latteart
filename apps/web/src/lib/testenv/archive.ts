@@ -15,12 +15,12 @@ import assert from "node:assert/strict";
  * an opaque value mismatch.
  */
 
-export const LOCAL_SIG = 0x04034b50;
-export const CENTRAL_SIG = 0x02014b50;
-export const EOCD_SIG = 0x06054b50;
+const LOCAL_SIG = 0x04034b50;
+const CENTRAL_SIG = 0x02014b50;
+const EOCD_SIG = 0x06054b50;
 /** Local header, central record, and end-of-central-directory, in bytes. */
 export const LOCAL_LEN = 30;
-export const CENTRAL_LEN = 46;
+const CENTRAL_LEN = 46;
 export const EOCD_LEN = 22;
 
 export interface ParsedEntry {

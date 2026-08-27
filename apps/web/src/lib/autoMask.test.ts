@@ -3,12 +3,18 @@
 /* eslint-disable @typescript-eslint/no-floating-promises */
 import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { installDom, pixelsOf, px, removeDom, solidUrl } from "./testenv/canvas.ts";
+import { GARBAGE_PNG, installDom, pixelsOf, px, removeDom, solidUrl } from "./testenv/canvas.ts";
 import { guessTarget, maskFromMatte, previewFromMatte } from "./autoMask.ts";
 import type { Matte } from "./removeBackgroundAI.ts";
 
-// Every entry point here builds DOM canvases, so the whole file runs with the
-// document installed.
+/**
+ * Smart edit's matte→mask conversion, on real pixels: the 128 threshold at
+ * both sides of the boundary, the subject/background polarity flip, and the
+ * preview tint pinned by region (which pixels changed), not by Skia's blend
+ * rounding. Every entry point builds DOM canvases, so the whole file runs
+ * with the document installed.
+ */
+
 installDom();
 after(() => removeDom());
 
@@ -90,7 +96,7 @@ describe("previewFromMatte", () => {
 
   it("rejects when the source can't decode", async () => {
     await assert.rejects(
-      previewFromMatte("data:image/png;base64,AAAA", matte(1, 1, [255]), "subject"),
+      previewFromMatte(GARBAGE_PNG, matte(1, 1, [255]), "subject"),
       /preview source failed to load/,
     );
   });

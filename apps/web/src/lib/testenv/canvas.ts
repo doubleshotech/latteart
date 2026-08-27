@@ -18,13 +18,14 @@ import type { SKRSContext2D } from "@napi-rs/canvas";
  *   them with before/after: their mere presence flips every `makeRaster` call
  *   in the file onto the DOM branch.
  *
- * The `OffscreenCanvas` stub wraps a napi `Canvas` by **composition, not
- * inheritance**. A subclass would inherit `toDataURL`, and `lib/raster`
- * branches on `"toDataURL" in raster` — the tests would silently exercise the
- * main-thread paths and lose the ability to catch a DOM API leaking into
- * worker-reachable code, which is the exact bug class the seam exists for.
- * The cost is that napi's `drawImage` doesn't accept the wrapper, so the
- * context is proxied to unwrap stub arguments.
+ * Both stubs wrap a napi `Canvas` by **composition, not inheritance**: the
+ * native class carries `toDataURL` AND `convertToBlob`, and `lib/raster`
+ * branches on `"toDataURL" in raster` / `"convertToBlob" in raster` — a
+ * subclass would answer for both environments at once, silently rerouting
+ * tests onto the wrong branch and losing the ability to catch a DOM API
+ * leaking into worker-reachable code, the exact bug class the seam exists
+ * for. The cost is that napi's `drawImage` doesn't accept the wrappers, so
+ * the context is proxied to unwrap stub arguments.
  */
 
 const INNER = Symbol("napi canvas behind the OffscreenCanvas stub");
@@ -33,9 +34,7 @@ type AnyRecord = Record<string, unknown>;
 const g = globalThis as AnyRecord;
 
 function unwrapSource(source: unknown): unknown {
-  return source instanceof OffscreenCanvasStub
-    ? (source as unknown as { [INNER]: Canvas })[INNER]
-    : source;
+  return source instanceof CanvasStub ? source[INNER] : source;
 }
 
 function proxyContext(ctx: SKRSContext2D): SKRSContext2D {
@@ -48,6 +47,10 @@ function proxyContext(ctx: SKRSContext2D): SKRSContext2D {
       const value = Reflect.get(target, prop) as unknown;
       return typeof value === "function" ? (value as () => void).bind(target) : value;
     },
+    // NOT redundant: the default set passes the Proxy as the receiver, and
+    // napi's native setters (fillStyle, globalAlpha, …) can't unwrap a Proxy
+    // `this` — "Failed to unwrap exclusive reference". Three-arg Reflect.set
+    // makes the native target the receiver.
     set(target, prop, value) {
       Reflect.set(target, prop, value);
       return true;
@@ -55,7 +58,15 @@ function proxyContext(ctx: SKRSContext2D): SKRSContext2D {
   });
 }
 
-export class OffscreenCanvasStub {
+/**
+ * Shared wrapper core for both canvas stubs. Composition is mandatory in BOTH
+ * directions: napi's `Canvas` natively carries `convertToBlob` AND
+ * `toDataURL`, and `lib/raster` branches on `"convertToBlob" in raster` /
+ * `"toDataURL" in raster` — so any subclass of it would answer `in` for both
+ * surfaces at once and silently reroute the tests. Each stub instead exposes
+ * ONLY its environment's real surface.
+ */
+abstract class CanvasStub {
   [INNER]: Canvas;
 
   constructor(width: number, height: number) {
@@ -79,7 +90,9 @@ export class OffscreenCanvasStub {
     if (id !== "2d") return null;
     return proxyContext(this[INNER].getContext("2d", opts as never));
   }
+}
 
+class OffscreenCanvasStub extends CanvasStub {
   convertToBlob(opts?: { type?: string }): Promise<Blob> {
     if (opts?.type && opts.type !== "image/png") {
       throw new Error(`the OffscreenCanvas stub only encodes PNG, got ${opts.type}`);
@@ -131,6 +144,31 @@ async function createImageBitmapStub(blob: Blob): Promise<ImageBitmap> {
   }) as unknown as ImageBitmap;
 }
 
+/** A `document` canvas: `toDataURL` plus the callback-style `toBlob` a real
+ * `HTMLCanvasElement` has — and NO `convertToBlob`, so `encodePngBlob`'s
+ * main-thread fallback branch actually runs under {@link installDom}. */
+class DomCanvasStub extends CanvasStub {
+  // Split per overload — tsgo rejects the union call tsc accepts.
+  toDataURL(type?: string, quality?: number): string {
+    if (type === "image/jpeg" || type === "image/webp") {
+      return quality === undefined
+        ? this[INNER].toDataURL(type)
+        : this[INNER].toDataURL(type, quality);
+    }
+    return this[INNER].toDataURL("image/png");
+  }
+
+  toBlob(callback: (blob: Blob | null) => void, type?: string): void {
+    // Split per overload — toBuffer has no union signature, and tsgo rejects
+    // the union call tsc accepts.
+    const buf =
+      type === "image/jpeg"
+        ? this[INNER].toBuffer("image/jpeg")
+        : this[INNER].toBuffer("image/png");
+    callback(new Blob([new Uint8Array(buf)], { type: type ?? "image/png" }));
+  }
+}
+
 /** `FileReader.readAsDataURL` only — what `pngDataUrl`'s worker branch needs. */
 class FileReaderStub {
   result: string | null = null;
@@ -168,7 +206,7 @@ export function installDom(): void {
   g.document = {
     createElement: (tag: string) => {
       if (tag !== "canvas") throw new Error(`the testenv document only makes canvases, got ${tag}`);
-      return new Canvas(1, 1);
+      return new DomCanvasStub(1, 1);
     },
   };
   g.Image = Image;
@@ -180,6 +218,21 @@ export function installDom(): void {
 export function removeDom(): void {
   delete g.document;
   delete g.Image;
+}
+
+/** Bytes that no image decoder accepts — the standard "this won't decode"
+ * input across the test files. */
+export const GARBAGE_PNG = "data:image/png;base64,AAAA";
+
+/** Left half white (reveal / keep), right half black (hide / regenerate) —
+ * the standard two-region mask across the test files. */
+export function halfMask(w: number, h: number): string {
+  return pngUrl(w, h, (ctx) => {
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, w / 2, h);
+    ctx.fillStyle = "#000";
+    ctx.fillRect(w / 2, 0, w / 2, h);
+  });
 }
 
 /** A PNG `data:` URL of a freshly painted canvas — the standard way tests
@@ -234,7 +287,7 @@ export async function pixelsOf(src: string | Uint8Array): Promise<DecodedPixels>
 
 /** Read raw RGBA straight off a canvas either environment produced. */
 export function pixelsOfRaster(raster: unknown): DecodedPixels {
-  const canvas = raster instanceof OffscreenCanvasStub ? raster[INNER] : (raster as Canvas);
+  const canvas = raster instanceof CanvasStub ? raster[INNER] : (raster as Canvas);
   const ctx = canvas.getContext("2d");
   const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
   return { width: canvas.width, height: canvas.height, data: image.data };

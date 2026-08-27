@@ -7,6 +7,8 @@ import {
   bitmapLog,
   installDom,
   installWorkerCanvas,
+  GARBAGE_PNG as GARBAGE,
+  halfMask,
   pixelsOf,
   pixelsOfRaster,
   pngUrl,
@@ -37,17 +39,6 @@ installWorkerCanvas();
  * each crossing: a stencil canvas cached under one environment is not drawable
  * by the other's contexts.
  */
-
-/** Left half white (reveal), right half black (hide), at the given size. */
-const halfMask = (w: number, h: number) =>
-  pngUrl(w, h, (ctx) => {
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(0, 0, w / 2, h);
-    ctx.fillStyle = "#000";
-    ctx.fillRect(w / 2, 0, w / 2, h);
-  });
-
-const GARBAGE = "data:image/png;base64,AAAA";
 
 describe("luma", () => {
   it("matches the Rec. 601 integer weights exactly", () => {
