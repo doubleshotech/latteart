@@ -28,7 +28,7 @@ import type { SKRSContext2D } from "@napi-rs/canvas";
  * the context is proxied to unwrap stub arguments.
  */
 
-const INNER = Symbol("napi canvas behind the OffscreenCanvas stub");
+const INNER = Symbol("napi canvas behind a canvas stub");
 
 type AnyRecord = Record<string, unknown>;
 const g = globalThis as AnyRecord;
@@ -58,14 +58,9 @@ function proxyContext(ctx: SKRSContext2D): SKRSContext2D {
   });
 }
 
-/**
- * Shared wrapper core for both canvas stubs. Composition is mandatory in BOTH
- * directions: napi's `Canvas` natively carries `convertToBlob` AND
- * `toDataURL`, and `lib/raster` branches on `"convertToBlob" in raster` /
- * `"toDataURL" in raster` — so any subclass of it would answer `in` for both
- * surfaces at once and silently reroute the tests. Each stub instead exposes
- * ONLY its environment's real surface.
- */
+/** Shared wrapper core for both canvas stubs — composition, not inheritance,
+ * for the reason the module docblock states: napi's `Canvas` answers `in` for
+ * both environments' encoder surfaces at once. */
 abstract class CanvasStub {
   [INNER]: Canvas;
 
@@ -198,9 +193,9 @@ export function installWorkerCanvas(): void {
 /**
  * Add the DOM surface the main-thread-only helpers use: a `document` that
  * makes (napi) canvases and a DOM-flavored `Image`. Scope with before/after —
- * see the module docblock. Callers that touch `lib/layerMask` should also
- * `clearMaskStencils()` when crossing environments: a stencil canvas cached
- * under one environment is not drawable by the other's contexts.
+ * see the module docblock. Tests that assert exact bitmap counts should
+ * `clearMaskStencils()` first — `lib/layerMask`'s cache spans tests, so a
+ * warm stencil silently changes how many decodes a call performs.
  */
 export function installDom(): void {
   g.document = {

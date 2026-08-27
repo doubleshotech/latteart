@@ -109,15 +109,19 @@ describe("flattenLayers — geometry", () => {
   });
 
   it("a hidden layer contributes neither pixels nor bounds", async () => {
+    // Two hidden layers, each pinning one half: the far one would grow the
+    // box, the overlapping top one would repaint the pixels red.
     const flat = await flattenLayers(
       [
         layer({ src: solidUrl(10, 10, "#00ff00"), width: 10, height: 10 }),
         layer({ src: solidUrl(10, 10, "#f00"), x: 100, y: 100, visible: false }),
+        layer({ src: solidUrl(10, 10, "#f00"), width: 10, height: 10, visible: false }),
       ],
       { pixelRatio: 1 },
     );
     assert.ok(flat);
     assert.deepEqual(flat.box, { x: 0, y: 0, width: 10, height: 10 });
+    assert.deepEqual(px(pixelsOfRaster(flat.canvas), 5, 5), [0, 255, 0, 255]);
   });
 
   it("frames a rotated layer by its hull, not its box", async () => {

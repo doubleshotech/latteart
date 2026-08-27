@@ -36,8 +36,8 @@ installWorkerCanvas();
  * `lib/export.worker` uses. The DOM-only helpers get a scoped `document` +
  * `Image` (installed in before/after, because their mere presence flips every
  * `makeRaster` call onto the DOM branch), and the stencil cache is cleared at
- * each crossing: a stencil canvas cached under one environment is not drawable
- * by the other's contexts.
+ * each crossing so no test inherits a warm stencil from another environment's
+ * run.
  */
 
 describe("luma", () => {

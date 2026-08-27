@@ -241,12 +241,16 @@ describe("exportOra — baked pixels", () => {
 
 describe("exportOra — hidden and broken layers", () => {
   it("exports a hidden layer, marked hidden, but composites only visible ones", async () => {
+    // The hidden red sits ON TOP: if the visibility filter broke, red would
+    // win the composite — so the green assertion below can actually fail.
     const out = await exportAndRead([
-      layer({ src: solidUrl(4, 4, "#ff0000"), visible: false, name: "hidden red" }),
       layer({ src: solidUrl(4, 4, "#00ff00"), name: "green" }),
+      layer({ src: solidUrl(4, 4, "#ff0000"), visible: false, name: "hidden red" }),
     ]);
 
     assert.equal(out.stack.length, 2, "losing hidden layers would make .ora lossier than PNG");
+    assert.equal(out.stack[0]!.name, "hidden red");
+    assert.equal(out.stack[0]!.visibility, "hidden");
     const merged = await pixelsOf(out.byName.get("mergedimage.png")!.data);
     assert.deepEqual(px(merged, 2, 2), [0, 255, 0, 255], "the hidden red never composites");
   });

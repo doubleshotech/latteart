@@ -1,9 +1,8 @@
 // node:test's describe()/it() are fire-and-forget by design — the runner awaits
 // them — so the floating-promise rule does not apply in this test file.
 /* eslint-disable @typescript-eslint/no-floating-promises */
-import { describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { after, before } from "node:test";
 import {
   bitmapLog,
   GARBAGE_PNG,
