@@ -673,7 +673,11 @@ export function PromptBar() {
                     type="button"
                     aria-label={`Edit ${s.label}`}
                     title="Edit style"
+                    // pointerUP must be stopped too: Radix selects the item on
+                    // pointerup, which would select the style and unmount the
+                    // menu before this button's click event ever fires.
                     onPointerDown={(e) => e.stopPropagation()}
+                    onPointerUp={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
@@ -692,6 +696,7 @@ export function PromptBar() {
                     aria-label={`Delete ${s.label}`}
                     title="Delete style"
                     onPointerDown={(e) => e.stopPropagation()}
+                    onPointerUp={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
