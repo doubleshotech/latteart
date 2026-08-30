@@ -5,6 +5,8 @@ import { SIZE_PRESETS, useSession } from "./sessionStore";
 import { useViewport } from "./viewportStore";
 import { resetHistory } from "./history";
 import { useGeneration } from "./generationStore";
+import type { Layer } from "./documentStore";
+import { boundsOf } from "../lib/bounds";
 import { clearMaskStencils } from "../lib/layerMask";
 import { renderThumbnail } from "../lib/thumbnail";
 
@@ -581,6 +583,34 @@ export async function createProject(name?: string): Promise<void> {
   if (!canLeaveProject()) return;
   const doc = await createRemote(name);
   await openProject(doc.id, { saveOutgoing: true });
+}
+
+/**
+ * Create a project holding `layers` — an imported document — and open it.
+ *
+ * The caller parses the file completely before this runs, so a corrupt import
+ * fails with no project created; from here on only store state changes. The
+ * layers land via `setState` rather than `addLayer` so they arrive as the new
+ * project's baseline: `openProject` reset the undo stack, and the first real
+ * edit records the imported document as its "before". The autosave
+ * subscription sees the same change and schedules the first save itself.
+ *
+ * Throws instead of silently returning when a generation is running — the
+ * menu item is disabled then, so reaching this is a race, and the user just
+ * picked a file: a toast beats a click that does nothing.
+ */
+export async function importProject(name: string, layers: Partial<Layer>[]): Promise<void> {
+  if (!canLeaveProject()) throw new Error("wait for the current generation to finish");
+  const doc = await createRemote(name);
+  await openProject(doc.id, { saveOutgoing: true });
+  useDocument.setState({
+    layers: layers.map((l) => makeLayer({ ...l, status: "ready", progress: 100 })),
+    selectedId: null,
+  });
+  // Frame the imported document — it sits wherever its own coordinates put it,
+  // which the previous project's viewport has no reason to be looking at.
+  const box = boundsOf(useDocument.getState().layers);
+  if (box) useViewport.getState().fitTo(box);
 }
 
 /** Rename a project. Renaming the open one updates the topbar in place. */
