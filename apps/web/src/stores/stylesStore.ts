@@ -1,6 +1,6 @@
 import { create } from "zustand";
-import type { CustomStyleInfo } from "@latteart/shared";
-import { createStyle, deleteStyle, fetchStyles } from "../api/styles";
+import type { CustomStyleInfo, UpdateStyleApiRequest } from "@latteart/shared";
+import { createStyle, deleteStyle, fetchStyles, updateStyle } from "../api/styles";
 import { extractPaletteHint, makeThumbnail } from "../lib/palette";
 
 /**
@@ -16,6 +16,9 @@ interface StylesState {
   /** Distill a new style from reference image data: URLs; returns its info so the
    * caller (the dialog) can select it. Throws with a user-facing message. */
   create: (images: string[], label?: string) => Promise<CustomStyleInfo>;
+  /** Rename and/or edit a style's descriptor; replaces the entry in place.
+   * Throws with a user-facing message. */
+  update: (id: string, patch: UpdateStyleApiRequest) => Promise<CustomStyleInfo>;
   remove: (id: string) => Promise<void>;
 }
 
@@ -35,6 +38,12 @@ export const useStyles = create<StylesState>((set) => ({
     ]);
     const info = await createStyle({ images, paletteHint, label, thumbnail });
     set((s) => ({ customStyles: [info, ...s.customStyles] }));
+    return info;
+  },
+
+  update: async (id, patch) => {
+    const info = await updateStyle(id, patch);
+    set((s) => ({ customStyles: s.customStyles.map((x) => (x.id === id ? info : x)) }));
     return info;
   },
 

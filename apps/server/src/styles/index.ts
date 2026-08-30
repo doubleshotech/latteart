@@ -9,7 +9,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import type { CustomStyle, CustomStyleInfo, StyleFragment, StyleSource } from "@latteart/shared";
+import type {
+  CustomStyle,
+  CustomStyleDetail,
+  CustomStyleInfo,
+  StyleFragment,
+  StyleSource,
+} from "@latteart/shared";
 import { assetRefFile, readAsset, writeAsset } from "../assets.ts";
 import { DATA_DIR } from "../paths.ts";
 
@@ -62,15 +68,27 @@ function writeManifest(styles: CustomStyle[]): void {
   }
 }
 
-/** Public list for the picker — label, thumbnail (rehydrated), and provenance. */
-export function listStyles(): CustomStyleInfo[] {
-  return readManifest().map((s) => ({
+/** Project a stored record to its public picker shape (thumbnail rehydrated). */
+function toInfo(s: CustomStyle): CustomStyleInfo {
+  return {
     id: s.id,
     label: s.label,
     thumbnail: readAsset(ASSETS_DIR, s.thumbnail),
     source: s.source,
     createdAt: s.createdAt,
-  }));
+  };
+}
+
+/** Public list for the picker — label, thumbnail (rehydrated), and provenance. */
+export function listStyles(): CustomStyleInfo[] {
+  return readManifest().map(toInfo);
+}
+
+/** One style with its descriptor text, for the edit dialog. Undefined if absent. */
+export function getStyleDetail(id: string): CustomStyleDetail | undefined {
+  const s = findStyle(id);
+  if (!s) return undefined;
+  return { ...toInfo(s), prompt: s.prompt, negativePrompt: s.negativePrompt };
 }
 
 /** Look up a custom style record by id (one manifest read), or undefined. */
@@ -139,13 +157,31 @@ export function createStyle(input: CreateStyleInput): CustomStyleInfo {
 
   styles.push(style);
   writeManifest(styles);
-  return {
-    id: style.id,
-    label: style.label,
-    thumbnail: readAsset(ASSETS_DIR, thumbRef),
-    source: style.source,
-    createdAt: style.createdAt,
-  };
+  return toInfo(style);
+}
+
+export interface UpdateStylePatch {
+  label?: string;
+  prompt?: string;
+  /** `""` clears the negatives; undefined keeps them. */
+  negativePrompt?: string;
+}
+
+/**
+ * Rename a style and/or edit its descriptor text; returns the updated public
+ * info, or undefined for an unknown id. Mutates the found record in place —
+ * `thumbnail` and `refs` must survive untouched, or the post-write asset prune
+ * would silently delete the source images native styleRef conditioning reads.
+ */
+export function updateStyle(id: string, patch: UpdateStylePatch): CustomStyleInfo | undefined {
+  const styles = readManifest();
+  const s = styles.find((x) => x.id === id);
+  if (!s) return undefined;
+  if (patch.label !== undefined) s.label = patch.label;
+  if (patch.prompt !== undefined) s.prompt = patch.prompt;
+  if (patch.negativePrompt !== undefined) s.negativePrompt = patch.negativePrompt || undefined;
+  writeManifest(styles);
+  return toInfo(s);
 }
 
 /** Remove a custom style (and prune its now-unreferenced assets). No-op if absent. */

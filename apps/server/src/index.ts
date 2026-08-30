@@ -19,6 +19,7 @@ import type {
   ProjectSession,
   ProviderContext,
   StyleFragment,
+  UpdateStyleApiRequest,
   UpscaleRequest,
 } from "@latteart/shared";
 import { composeStyle, stylePreset } from "@latteart/shared";
@@ -41,9 +42,12 @@ import {
 import {
   createStyle,
   deleteStyle,
+  getStyleDetail,
   listStyles,
   nextStyleLabel,
   resolveCustomStyle,
+  updateStyle,
+  type UpdateStylePatch,
 } from "./styles/index.ts";
 import { heuristicDescriptor } from "./styles/heuristic.ts";
 
@@ -490,6 +494,42 @@ const routes = app
       thumbnail: typeof body.thumbnail === "string" ? body.thumbnail : undefined,
       images,
     });
+    return c.json(info);
+  })
+
+  // One style with its descriptor text — the edit dialog's prefill.
+  .get("/api/styles/:id", (c) => {
+    const detail = getStyleDetail(c.req.param("id"));
+    if (!detail) return c.json({ error: "no such style" }, 404);
+    return c.json(detail);
+  })
+
+  // Rename a custom style and/or edit its descriptor. Omitted fields keep
+  // their value; a provided-but-empty label or prompt is rejected rather than
+  // silently replaced (create derives a default label, update must not), and a
+  // body with no recognized field at all — malformed JSON included — is a 400,
+  // not a 200 that quietly rewrites the manifest.
+  .patch("/api/styles/:id", async (c) => {
+    if (!getStyleDetail(c.req.param("id"))) return c.json({ error: "no such style" }, 404);
+    const body = await c.req
+      .json<Partial<UpdateStyleApiRequest>>()
+      .catch(() => ({}) as Partial<UpdateStyleApiRequest>);
+    const patch: UpdateStylePatch = {};
+    if (body.label !== undefined) {
+      const label = String(body.label).trim();
+      if (!label) return c.json({ error: "the name cannot be empty" }, 400);
+      patch.label = label;
+    }
+    if (body.prompt !== undefined) {
+      const prompt = String(body.prompt).trim();
+      if (!prompt) return c.json({ error: "the style description cannot be empty" }, 400);
+      patch.prompt = prompt;
+    }
+    if (body.negativePrompt !== undefined)
+      patch.negativePrompt = String(body.negativePrompt).trim();
+    if (Object.keys(patch).length === 0) return c.json({ error: "nothing to update" }, 400);
+    const info = updateStyle(c.req.param("id"), patch);
+    if (!info) return c.json({ error: "no such style" }, 404);
     return c.json(info);
   })
 
