@@ -28,6 +28,7 @@ catalog:
   concurrently: ^10.0.3
   "@huggingface/transformers": ^3.8.1
   "@napi-rs/canvas": ^1.0.8
+  "@xmldom/xmldom": ^0.9.8
 overrides:
   vite: "catalog:"
 peerDependencyRules:

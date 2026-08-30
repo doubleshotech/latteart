@@ -1,13 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ChevronDown, Copy, Pencil, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, Copy, FileUp, Pencil, Plus, Trash2 } from "lucide-react";
+import { importOra } from "../lib/oraImport";
 import { useGeneration } from "../stores/generationStore";
 import {
   createProject,
   deleteProject,
   duplicateProject,
   fetchProjects,
+  importProject,
   renameProject,
   switchProject,
   useProject,
@@ -96,6 +98,15 @@ export function ProjectMenu() {
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const importInput = useRef<HTMLInputElement>(null);
+
+  // Parse the whole file before any project exists, so a corrupt archive
+  // toasts its error with nothing created; the new project is named after it.
+  const onImportFile = (file: File) =>
+    guard("import", async () => {
+      const layers = await importOra(new Uint8Array(await file.arrayBuffer()));
+      await importProject(file.name.replace(/\.ora$/i, "").trim() || "Imported", layers);
+    });
 
   // Refresh on open so timestamps and thumbnails reflect the latest save.
   const onOpenChange = (open: boolean) => {
@@ -242,6 +253,19 @@ export function ProjectMenu() {
 
             <DropdownMenu.Item
               className="dd-item"
+              {...blockedItem}
+              // Synchronous click, not the dialogs' setTimeout deferral: a file
+              // input's programmatic click spends the user activation of the
+              // click being handled, and a native picker has no focus trap to
+              // race the closing menu.
+              onSelect={() => importInput.current?.click()}
+            >
+              <FileUp size={14} strokeWidth={1.8} />
+              Import .ora…
+            </DropdownMenu.Item>
+
+            <DropdownMenu.Item
+              className="dd-item"
               // Let the menu close (no preventDefault — that would leave it
               // stranded behind the dialog), then open on the next tick so its
               // focus trap doesn't race the menu restoring focus to the trigger.
@@ -275,6 +299,19 @@ export function ProjectMenu() {
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
+
+      <input
+        ref={importInput}
+        type="file"
+        accept=".ora"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const file = e.currentTarget.files?.[0];
+          // Cleared so picking the same file again still fires a change event.
+          e.currentTarget.value = "";
+          if (file) void onImportFile(file);
+        }}
+      />
 
       <Dialog.Root open={renaming} onOpenChange={setRenaming}>
         <Dialog.Portal>

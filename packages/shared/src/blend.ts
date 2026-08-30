@@ -93,6 +93,27 @@ export function oraCompositeOp(mode: BlendMode | null | undefined): string {
 }
 
 /**
+ * The blend mode an OpenRaster `composite-op` maps to — the read-side inverse
+ * of {@link oraCompositeOp}, kept beside it so the two spellings of the same
+ * rule cannot drift. Mechanical for the same reason the writer is: the op
+ * names after `svg:` are the CSS/canvas blend-mode names these ids already
+ * use, so only `src-over` needs re-spelling to "normal".
+ *
+ * Ops latteart has no mode for — the Porter-Duff family (`svg:plus`,
+ * `svg:dst-in`, `svg:src-atop`, …), vendor extensions (`krita:*`), anything
+ * unrecognized — import as normal. That is the same fallback GIMP applies to
+ * ops it doesn't know, so an import here composites the way that reader would
+ * show the same file. `svg:exclusion` maps back even though the writer emits
+ * it out of spec (see {@link oraCompositeOp}) — our own files must round-trip.
+ */
+export function blendModeFromOra(op: string | null | undefined): BlendMode {
+  if (!op?.startsWith("svg:")) return DEFAULT_BLEND_MODE;
+  const name = op.slice(4);
+  const mode = name === "src-over" ? DEFAULT_BLEND_MODE : name;
+  return isBlendMode(mode) ? mode : DEFAULT_BLEND_MODE;
+}
+
+/**
  * Whether a layer composites through the stack rather than painting straight
  * over it. Canvas chrome that would sit between a layer and its backdrop (the
  * transparency checkerboard, the drop shadow) has to step aside when this is

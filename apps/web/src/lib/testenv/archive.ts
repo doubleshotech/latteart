@@ -49,7 +49,7 @@ export function unpackStamp(time: number, date: number) {
   };
 }
 
-export async function bytesOf(blob: Blob): Promise<Uint8Array> {
+export async function bytesOf(blob: Blob): Promise<Uint8Array<ArrayBuffer>> {
   return new Uint8Array(await blob.arrayBuffer());
 }
 
