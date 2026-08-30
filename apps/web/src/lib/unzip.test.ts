@@ -3,6 +3,7 @@
 /* eslint-disable @typescript-eslint/no-floating-promises */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { bytesOf, EOCD_LEN } from "./testenv/archive.ts";
 import { buildZip } from "./testenv/buildzip.ts";
 import { unzip } from "./unzip.ts";
 import { zip } from "./zip.ts";
@@ -14,7 +15,11 @@ import { zip } from "./zip.ts";
  */
 
 const text = (s: string) => new TextEncoder().encode(s);
-const bytesOf = async (blob: Blob) => new Uint8Array(await blob.arrayBuffer());
+
+/** Offset of a field inside the archive's end-of-central-directory record —
+ * the tampering tests patch fields there by their layout offset. */
+const eocdField = (archive: Uint8Array, fieldOffset: number) =>
+  archive.length - EOCD_LEN + fieldOffset;
 
 async function payload(archive: Uint8Array<ArrayBuffer>, name: string): Promise<string> {
   const entry = unzip(archive).get(name);
@@ -119,7 +124,7 @@ describe("unzip — refusals", () => {
     // comparison can catch a directory whose uncompressed size is wrong.
     const archive = buildZip([{ name: "a.txt", data: text("honest bytes") }]);
     const view = new DataView(archive.buffer);
-    const central = view.getUint32(archive.length - 22 + 16, true);
+    const central = view.getUint32(eocdField(archive, 16), true);
     view.setUint32(central + 24, 5, true);
     const entry = unzip(archive).get("a.txt");
     assert.ok(entry);
@@ -131,7 +136,7 @@ describe("unzip — refusals", () => {
     const view = new DataView(archive.buffer);
     // Stamp a compressed size far larger than the file — the payload span
     // check must refuse it rather than hand back an out-of-range subarray.
-    const central = view.getUint32(archive.length - 22 + 16, true);
+    const central = view.getUint32(eocdField(archive, 16), true);
     view.setUint32(central + 20, 0x7fffffff, true);
     assert.throws(() => unzip(archive), /runs past the end/);
   });
@@ -140,16 +145,26 @@ describe("unzip — refusals", () => {
     const archive = buildZip([{ name: "a.txt", data: text("x") }]);
     const view = new DataView(archive.buffer);
     // Stamp a nonzero disk number into the EOCD.
-    view.setUint16(archive.length - 22 + 4, 1, true);
+    view.setUint16(eocdField(archive, 4), 1, true);
     assert.throws(() => unzip(archive), /multi-disk/);
   });
 
-  it("rejects ZIP64 sentinel values", () => {
+  it("rejects ZIP64 sentinel values in a central entry", () => {
     const archive = buildZip([{ name: "a.txt", data: text("x") }]);
     const view = new DataView(archive.buffer);
     // Stamp the central directory's uncompressed size with the ZIP64 marker.
-    const central = view.getUint32(archive.length - 22 + 16, true);
+    const central = view.getUint32(eocdField(archive, 16), true);
     view.setUint32(central + 24, 0xffffffff, true);
+    assert.throws(() => unzip(archive), /ZIP64/);
+  });
+
+  it("rejects the ZIP64 entry-count sentinel in the EOCD", () => {
+    const archive = buildZip([{ name: "a.txt", data: text("x") }]);
+    const view = new DataView(archive.buffer);
+    // 0xffff in both count fields is the "real value lives in the ZIP64
+    // record" marker, not a count.
+    view.setUint16(eocdField(archive, 8), 0xffff, true);
+    view.setUint16(eocdField(archive, 10), 0xffff, true);
     assert.throws(() => unzip(archive), /ZIP64/);
   });
 });
