@@ -124,7 +124,7 @@ describe("importOra — stack.xml semantics", () => {
       ora(
         wrap(
           `<layer name="top" src="data/top.png" x="1" y="2"/>
-           <layer name="bare" src="data/mid.png"/>`,
+           <layer name="bare" src="data/mid.png" opacity="" x=""/>`,
         ),
         IMAGES,
       ),
@@ -132,8 +132,9 @@ describe("importOra — stack.xml semantics", () => {
     const [bare, top] = imported;
     assert.deepEqual([top!.x, top!.y], [1, 2]);
     assert.deepEqual([top!.width, top!.height], [3, 5], "box = the PNG's own pixel size");
-    // Every optional attribute at its spec default, asserted on a layer that
-    // carries none of them.
+    // Every optional attribute at its spec default, asserted on a layer whose
+    // attributes are absent or EMPTY — Number("") is 0, so an empty opacity
+    // must fall back to 1, not import an invisible layer.
     assert.deepEqual([bare!.x, bare!.y], [0, 0]);
     assert.equal(bare!.opacity, 1);
     assert.equal(bare!.visible, true);
@@ -150,7 +151,7 @@ describe("importOra — stack.xml semantics", () => {
       ora(
         wrap(
           `<layer name="over" src="data/top.png"/>
-           <stack name="outer" opacity="0.5">
+           <stack name="outer" opacity="0.5" x="99" y="99">
              <stack name="inner" opacity="0.5">
                <layer name="in-group" src="data/mid.png" opacity="0.5" composite-op="svg:multiply"/>
              </stack>
@@ -171,6 +172,8 @@ describe("importOra — stack.xml semantics", () => {
     );
     const [inHidden, inGroup] = imported;
     assert.equal(inGroup!.opacity, 0.125, "0.5 outer × 0.5 inner × 0.5 layer");
+    // Spec 0.0.6 deprecates x/y on stacks: outer's x="99" adds no offset.
+    assert.deepEqual([inGroup!.x, inGroup!.y], [0, 0], "a stack's x/y are ignored");
     assert.equal(inGroup!.blendMode, "multiply", "the layer's own op, not the group's");
     assert.equal(inHidden!.visible, false, "hidden propagates through a visible group in between");
     assert.equal(inHidden!.opacity, 1);

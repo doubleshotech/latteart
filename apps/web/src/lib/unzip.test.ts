@@ -136,6 +136,14 @@ describe("unzip — refusals", () => {
     assert.throws(() => unzip(archive), /runs past the end/);
   });
 
+  it("rejects a multi-disk archive", () => {
+    const archive = buildZip([{ name: "a.txt", data: text("x") }]);
+    const view = new DataView(archive.buffer);
+    // Stamp a nonzero disk number into the EOCD.
+    view.setUint16(archive.length - 22 + 4, 1, true);
+    assert.throws(() => unzip(archive), /multi-disk/);
+  });
+
   it("rejects ZIP64 sentinel values", () => {
     const archive = buildZip([{ name: "a.txt", data: text("x") }]);
     const view = new DataView(archive.buffer);

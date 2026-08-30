@@ -71,7 +71,9 @@ function findEocd(view: DataView, length: number): number {
 /**
  * Parse a ZIP archive into its entries, keyed by their exact stored name.
  * Structural problems (and the unsupported features above) throw here;
- * per-entry payload problems throw from that entry's `data()`.
+ * per-entry payload problems throw from that entry's `data()`. Duplicate
+ * names last-win in the map — the same resolution mainstream extractors
+ * apply, and an `.ora` writer has no reason to emit duplicates.
  */
 export function unzip(buf: Uint8Array<ArrayBuffer>): Map<string, UnzippedEntry> {
   const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);

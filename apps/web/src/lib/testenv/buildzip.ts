@@ -1,5 +1,4 @@
-import { deflateRawSync } from "node:zlib";
-import { crc32 } from "../zip.ts";
+import { crc32, deflateRawSync } from "node:zlib";
 
 /**
  * A configurable ZIP builder for exercising `lib/unzip` against archives the

@@ -50,7 +50,9 @@ function attr(el: Element, name: string): string | null {
 
 function numAttr(el: Element, name: string, fallback: number): number {
   const raw = attr(el, name);
-  if (raw === null) return fallback;
+  // Empty counts as absent: Number("") is 0, which would silently turn
+  // opacity="" into an invisible layer instead of the spec default.
+  if (raw === null || raw.trim() === "") return fallback;
   const value = Number(raw);
   return Number.isFinite(value) ? value : fallback;
 }
