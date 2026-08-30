@@ -63,9 +63,14 @@ describe("unzip — foreign archive shapes", () => {
   });
 
   it("is not fooled by EOCD signature bytes inside the comment", async () => {
-    // A comment containing the magic bytes: a naive backward scan stops at the
-    // false signature (closer to the end) and reads garbage counts from it.
-    const comment = new Uint8Array([0x99, 0x50, 0x4b, 0x05, 0x06, 0x99, 0x98, 0x97]);
+    // A comment long enough that its fake signature lands where the backward
+    // scan actually looks (the scan starts 22 bytes from the end, so a fake
+    // inside the final 22 bytes would never discriminate). A naive scan stops
+    // at the fake — nearer the end than the real record — and reads garbage
+    // counts from comment bytes; the comment-length consistency check is what
+    // rejects it.
+    const comment = new Uint8Array(30).fill(0x99);
+    comment.set([0x50, 0x4b, 0x05, 0x06], 4);
     const archive = buildZip([{ name: "a.txt", data: text("real") }], { comment });
     assert.equal(await payload(archive, "a.txt"), "real");
   });
@@ -107,6 +112,18 @@ describe("unzip — refusals", () => {
     const entry = unzip(archive).get("data/l.png");
     assert.ok(entry);
     await assert.rejects(entry.data(), /checksum: data\/l\.png/);
+  });
+
+  it("rejects a directory that lies about an entry's size, naming the entry", async () => {
+    // The bytes themselves are intact — the CRC would pass — so only the size
+    // comparison can catch a directory whose uncompressed size is wrong.
+    const archive = buildZip([{ name: "a.txt", data: text("honest bytes") }]);
+    const view = new DataView(archive.buffer);
+    const central = view.getUint32(archive.length - 22 + 16, true);
+    view.setUint32(central + 24, 5, true);
+    const entry = unzip(archive).get("a.txt");
+    assert.ok(entry);
+    await assert.rejects(entry.data(), /wrong size after decompression: a\.txt/);
   });
 
   it("rejects an entry whose data runs past the end of the file", () => {

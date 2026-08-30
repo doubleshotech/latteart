@@ -121,28 +121,44 @@ describe("importOra — stack.xml semantics", () => {
 
   it("sizes a layer from its own PNG and applies attribute defaults", async () => {
     const imported = await importOra(
-      ora(wrap(`<layer name="top" src="data/top.png" x="1" y="2"/>`), IMAGES),
+      ora(
+        wrap(
+          `<layer name="top" src="data/top.png" x="1" y="2"/>
+           <layer name="bare" src="data/mid.png"/>`,
+        ),
+        IMAGES,
+      ),
     );
-    const [top] = imported;
+    const [bare, top] = imported;
     assert.deepEqual([top!.x, top!.y], [1, 2]);
     assert.deepEqual([top!.width, top!.height], [3, 5], "box = the PNG's own pixel size");
-    assert.equal(top!.opacity, 1);
-    assert.equal(top!.visible, true);
-    assert.equal(top!.blendMode, "normal");
-    assert.equal(top!.rotation, 0);
-    assert.equal(top!.mask, null);
+    // Every optional attribute at its spec default, asserted on a layer that
+    // carries none of them.
+    assert.deepEqual([bare!.x, bare!.y], [0, 0]);
+    assert.equal(bare!.opacity, 1);
+    assert.equal(bare!.visible, true);
+    assert.equal(bare!.blendMode, "normal");
+    assert.equal(bare!.rotation, 0);
+    assert.equal(bare!.mask, null);
   });
 
   it("flattens a nested stack: opacity multiplies, hidden inherits, own op survives", async () => {
+    // Two levels deep on purpose: at one level, "inherit from the ancestor"
+    // and "read the immediate parent" are the same computation — only a
+    // grandparent's opacity or visibility discriminates between them.
     const imported = await importOra(
       ora(
         wrap(
           `<layer name="over" src="data/top.png"/>
-           <stack name="group" opacity="0.5">
-             <layer name="in-group" src="data/mid.png" opacity="0.5" composite-op="svg:multiply"/>
+           <stack name="outer" opacity="0.5">
+             <stack name="inner" opacity="0.5">
+               <layer name="in-group" src="data/mid.png" opacity="0.5" composite-op="svg:multiply"/>
+             </stack>
            </stack>
            <stack visibility="hidden">
-             <layer name="in-hidden" src="data/bottom.png"/>
+             <stack>
+               <layer name="in-hidden" src="data/bottom.png"/>
+             </stack>
            </stack>`,
         ),
         IMAGES,
@@ -154,9 +170,9 @@ describe("importOra — stack.xml semantics", () => {
       "group members keep their place in the flattened z-order",
     );
     const [inHidden, inGroup] = imported;
-    assert.equal(inGroup!.opacity, 0.25, "0.5 group × 0.5 layer");
+    assert.equal(inGroup!.opacity, 0.125, "0.5 outer × 0.5 inner × 0.5 layer");
     assert.equal(inGroup!.blendMode, "multiply", "the layer's own op, not the group's");
-    assert.equal(inHidden!.visible, false, "a layer inside a hidden group imports hidden");
+    assert.equal(inHidden!.visible, false, "hidden propagates through a visible group in between");
     assert.equal(inHidden!.opacity, 1);
   });
 
