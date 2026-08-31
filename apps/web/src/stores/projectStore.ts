@@ -5,6 +5,7 @@ import { SIZE_PRESETS, useSession } from "./sessionStore";
 import { useViewport } from "./viewportStore";
 import { resetHistory } from "./history";
 import { useGeneration } from "./generationStore";
+import { useStyles } from "./stylesStore";
 import type { Layer } from "./documentStore";
 import { boundsOf } from "../lib/bounds";
 import { clearMaskStencils } from "../lib/layerMask";
@@ -643,6 +644,12 @@ export async function duplicateProject(id: string): Promise<void> {
   });
   if (!res.ok) throw new Error("could not duplicate the project");
   const doc = (await res.json()) as ProjectDoc;
+  // The server cascade copied the source's project-scoped styles and remapped
+  // the duplicate's session styleId onto its copy. Refresh the style library
+  // BEFORE opening: the copy must be in the client store when the session
+  // hydrates, or the picker's not-visible fallback resets the remapped
+  // selection to "none" and autosave persists the reset.
+  await useStyles.getState().refresh();
   await openProject(doc.id, { saveOutgoing: true });
 }
 
@@ -655,6 +662,10 @@ export async function deleteProject(id: string): Promise<void> {
   const wasOpen = useProject.getState().id === id;
   const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error("could not delete the project");
+  // The server cascade dropped the styles scoped to the deleted project; keep
+  // the client library honest. Best-effort — every picker filters them out
+  // anyway, so a failed refresh only leaves invisible entries until reload.
+  void useStyles.getState().refresh();
 
   if (!wasOpen) {
     await fetchProjects();

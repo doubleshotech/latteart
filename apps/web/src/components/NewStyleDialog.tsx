@@ -3,6 +3,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { ImagePlus, Sparkles, X } from "lucide-react";
 import type { CustomStyleInfo } from "@latteart/shared";
 import { fileToDataUrl } from "../lib/palette";
+import { useProject } from "../stores/projectStore";
 import { useStyles } from "../stores/stylesStore";
 
 interface Ref {
@@ -57,6 +58,7 @@ export function NewStyleDialog({
   onCreated: (info: CustomStyleInfo) => void;
 }) {
   const createStyle = useStyles((s) => s.create);
+  const projectId = useProject((s) => s.id);
   const [refs, setRefs] = useState<Ref[]>([]);
   const [label, setLabel] = useState("");
   // Default scope = the open project (chosen with the user); untick for global.
@@ -98,7 +100,7 @@ export function NewStyleDialog({
       const info = await createStyle(
         refs.map((r) => r.dataUrl),
         label.trim() || undefined,
-        scopeToProject,
+        scopeToProject ? projectId || undefined : undefined,
       );
       onCreated(info);
       onOpenChange(false);

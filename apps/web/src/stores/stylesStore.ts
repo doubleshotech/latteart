@@ -2,7 +2,6 @@ import { create } from "zustand";
 import type { CustomStyleInfo, UpdateStyleApiRequest } from "@latteart/shared";
 import { createStyle, deleteStyle, fetchStyles, updateStyle } from "../api/styles";
 import { extractPaletteHint, makeThumbnail } from "../lib/palette";
-import { useProject } from "./projectStore";
 
 /**
  * The user's custom style library — image-derived styles that compose into
@@ -18,11 +17,13 @@ interface StylesState {
   refresh: () => Promise<void>;
   /** Distill a new style from reference image data: URLs; returns its info so the
    * caller (the dialog) can select it. Throws with a user-facing message.
-   * `scopeToProject` scopes it to the open project; false = global. */
+   * `projectId` scopes it to that project; undefined = global. The caller passes
+   * the id (not this store reading projectStore) so projectStore can import
+   * this store for its duplicate/delete cascades without a cycle. */
   create: (
     images: string[],
     label: string | undefined,
-    scopeToProject: boolean,
+    projectId: string | undefined,
   ) => Promise<CustomStyleInfo>;
   /** Rename and/or edit a style's descriptor; replaces the entry in place.
    * Throws with a user-facing message. */
@@ -39,12 +40,11 @@ export const useStyles = create<StylesState>((set) => ({
     set({ customStyles: list, loaded: true });
   },
 
-  create: async (images, label, scopeToProject) => {
+  create: async (images, label, projectId) => {
     const [paletteHint, thumbnail] = await Promise.all([
       extractPaletteHint(images),
       images[0] ? makeThumbnail(images[0]) : Promise.resolve(undefined),
     ]);
-    const projectId = scopeToProject ? useProject.getState().id || undefined : undefined;
     const info = await createStyle({ images, paletteHint, label, thumbnail, projectId });
     set((s) => ({ customStyles: [info, ...s.customStyles] }));
     return info;

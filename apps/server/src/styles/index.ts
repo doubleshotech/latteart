@@ -40,6 +40,11 @@ const STYLES_DIR = join(DATA_DIR, "styles");
 const ASSETS_DIR = join(STYLES_DIR, "assets");
 const MANIFEST_PATH = join(STYLES_DIR, "styles.json");
 
+/** The `custom:` namespace keeps generated ids clear of preset ids. */
+function newStyleId(): string {
+  return `custom:${randomUUID().slice(0, 8)}`;
+}
+
 function readManifest(): CustomStyle[] {
   if (!existsSync(MANIFEST_PATH)) return [];
   try {
@@ -150,7 +155,7 @@ export function createStyle(input: CreateStyleInput): CustomStyleInfo {
     .filter((r): r is string => r !== null);
 
   const style: CustomStyle = {
-    id: `custom:${randomUUID().slice(0, 8)}`,
+    id: newStyleId(),
     label: input.label,
     prompt: input.prompt,
     negativePrompt: input.negativePrompt,
@@ -232,7 +237,7 @@ export function copyStylesForProject(
     if (s.projectId !== fromProjectId) continue;
     const copy: CustomStyle = {
       ...s,
-      id: `custom:${randomUUID().slice(0, 8)}`,
+      id: newStyleId(),
       projectId: toProjectId,
     };
     idMap.set(s.id, copy.id);
