@@ -514,6 +514,24 @@ async function openProject(id: string, opts: { saveOutgoing: boolean }): Promise
     const doc = (await res.json()) as ProjectDoc | null;
     if (!doc) throw new Error("project not found");
 
+    // A custom selection the style library doesn't know yet usually means the
+    // CLIENT list is stale, not that the style is gone — a duplicate's freshly
+    // remapped copy, or a style another tab created. Refresh before hydrating,
+    // or the picker's not-visible fallback reads staleness as "deleted" and
+    // persists a reset to "none" over real server state. Best-effort: if the
+    // refresh fails the open still proceeds, and a style that is then truly
+    // absent resets exactly as the fallback intends.
+    const { styleId } = doc.session;
+    if (
+      styleId.startsWith("custom:") &&
+      !useStyles.getState().customStyles.some((s) => s.id === styleId)
+    ) {
+      await useStyles
+        .getState()
+        .refresh()
+        .catch(() => {});
+    }
+
     // Drop anything the outgoing document scheduled while we were awaiting —
     // hydrate is about to rebaseline savedKey, which would turn that pending
     // save into a silent no-op against the wrong document.
@@ -645,13 +663,8 @@ export async function duplicateProject(id: string): Promise<void> {
   if (!res.ok) throw new Error("could not duplicate the project");
   const doc = (await res.json()) as ProjectDoc;
   // The server cascade copied the source's project-scoped styles and remapped
-  // the duplicate's session styleId onto its copy. Refresh the style library
-  // BEFORE opening: the copy must be in the client store when the session
-  // hydrates, or the picker's not-visible fallback resets the remapped
-  // selection to "none" and autosave persists the reset. A failed refresh
-  // deliberately fails the whole duplicate — failing visibly here beats
-  // opening the copy and silently destroying the remap.
-  await useStyles.getState().refresh();
+  // the copy's session styleId onto its own copy; openProject notices the
+  // unknown custom id and refreshes the style library before hydrating.
   await openProject(doc.id, { saveOutgoing: true });
 }
 
@@ -665,9 +678,13 @@ export async function deleteProject(id: string): Promise<void> {
   const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error("could not delete the project");
   // The server cascade dropped the styles scoped to the deleted project; keep
-  // the client library honest. Best-effort — every picker filters them out
-  // anyway, so a failed refresh only leaves invisible entries until reload.
-  void useStyles.getState().refresh();
+  // the client library honest. Best-effort with the rejection swallowed —
+  // every picker filters them out anyway, so a failed refresh only leaves
+  // invisible entries until reload.
+  void useStyles
+    .getState()
+    .refresh()
+    .catch(() => {});
 
   if (!wasOpen) {
     await fetchProjects();

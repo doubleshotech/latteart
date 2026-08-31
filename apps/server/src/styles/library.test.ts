@@ -130,15 +130,15 @@ describe("project scoping", () => {
 
   it("deleteStylesForProject removes only that project's styles and prunes their assets", () => {
     const global = makeStyle("Keep global");
-    const mine = makeStyle("Mine", "proj-a");
+    makeStyle("Mine", "proj-a");
     const other = makeStyle("Other", "proj-b");
     const before = readdirSync(ASSETS_DIR).length;
     assert.equal(before, 6);
 
     lib.deleteStylesForProject("proj-a");
     const ids = lib.listStyles().map((s) => s.id);
+    // mine.id's absence is implied: deepEqual pins the surviving set exactly.
     assert.deepEqual(ids.toSorted(), [global.id, other.id].toSorted());
-    assert.ok(!ids.includes(mine.id));
     assert.equal(readdirSync(ASSETS_DIR).length, 4);
 
     lib.deleteStyle(global.id);

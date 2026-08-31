@@ -10,8 +10,10 @@ import { extractPaletteHint, makeThumbnail } from "../lib/palette";
  * the create request; the descriptor itself is distilled server-side. The store
  * holds the FULL library, project-scoped styles included — visibility filtering
  * is the picker's job (see visibleStyles), so a project switch needs no refetch.
- * The exceptions are duplicate/delete of a project: their server-side style
- * cascades change the library itself, so projectStore calls refresh() there.
+ * Two exceptions in projectStore, where server-side cascades change the library
+ * itself: openProject refreshes when the incoming session selects a custom id
+ * this store doesn't know (a duplicate's remapped copy, another tab's style),
+ * and deleteProject refreshes after the delete cascade.
  */
 interface StylesState {
   customStyles: CustomStyleInfo[];

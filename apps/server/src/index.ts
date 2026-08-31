@@ -259,10 +259,19 @@ const routes = app
     if (!copy) return c.json({ error: "no such project" }, 404);
     // Cascade: styles scoped to the source get copies scoped to the duplicate,
     // and a session pointing at one is remapped onto its copy — otherwise the
-    // duplicate would open with a style its own picker can't show.
-    const styleIds = copyStylesForProject(id, copy.id);
-    const remapped = copy.session.styleId ? styleIds.get(copy.session.styleId) : undefined;
-    const doc = remapped ? (restyleSession(copy.id, remapped) ?? copy) : copy;
+    // duplicate would open with a style its own picker can't show. The project
+    // copy above is the primary act; a cascade failure (disk error) must not
+    // turn it into a 500 for a duplicate that exists. Un-remapped, the copy's
+    // session points at a style scoped elsewhere, which the client already
+    // resolves by falling back to "none".
+    let doc = copy;
+    try {
+      const styleIds = copyStylesForProject(id, copy.id);
+      const remapped = copy.session.styleId ? styleIds.get(copy.session.styleId) : undefined;
+      if (remapped) doc = restyleSession(copy.id, remapped) ?? copy;
+    } catch (err) {
+      console.error("style cascade failed for duplicated project", copy.id, err);
+    }
     return c.json(doc, 201);
   })
 
@@ -271,7 +280,13 @@ const routes = app
     if (!id) return c.json({ error: "invalid project id" }, 400);
     if (!deleteProject(id)) return c.json({ error: "no such project" }, 404);
     // Cascade: styles scoped to the deleted project would be invisible forever.
-    deleteStylesForProject(id);
+    // The delete above already happened, so a cascade failure must not report
+    // it as failed — the orphaned styles are the (logged) lesser damage.
+    try {
+      deleteStylesForProject(id);
+    } catch (err) {
+      console.error("style cascade failed for deleted project", id, err);
+    }
     return c.json({ ok: true });
   })
 
