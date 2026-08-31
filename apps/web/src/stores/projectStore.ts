@@ -648,7 +648,9 @@ export async function duplicateProject(id: string): Promise<void> {
   // the duplicate's session styleId onto its copy. Refresh the style library
   // BEFORE opening: the copy must be in the client store when the session
   // hydrates, or the picker's not-visible fallback resets the remapped
-  // selection to "none" and autosave persists the reset.
+  // selection to "none" and autosave persists the reset. A failed refresh
+  // deliberately fails the whole duplicate — failing visibly here beats
+  // opening the copy and silently destroying the remap.
   await useStyles.getState().refresh();
   await openProject(doc.id, { saveOutgoing: true });
 }
