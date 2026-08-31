@@ -20,9 +20,11 @@ import { assetRefFile, readAsset, writeAsset } from "../assets.ts";
 import { DATA_DIR } from "../paths.ts";
 
 /**
- * On-disk custom-style library (local-first, like the project + key stores). A
- * single global library — styles are reusable across projects (there's one
- * implicit project today). Lives under `.data/styles/` as:
+ * On-disk custom-style library (local-first, like the project + key stores).
+ * One manifest holds every style; a style is either global (visible in every
+ * project) or scoped to one project via `projectId`. Scoping is a visibility
+ * feature the picker enforces client-side — the generate/edit routes resolve
+ * any custom id they're handed. Lives under `.data/styles/` as:
  *
  *   styles.json           manifest — an array of {@link CustomStyle}
  *   assets/<hash>.<ext>   thumbnails + source reference images, content-hashed
@@ -75,6 +77,7 @@ function toInfo(s: CustomStyle): CustomStyleInfo {
     label: s.label,
     thumbnail: readAsset(ASSETS_DIR, s.thumbnail),
     source: s.source,
+    projectId: s.projectId,
     createdAt: s.createdAt,
   };
 }
@@ -130,6 +133,8 @@ export interface CreateStyleInput {
   thumbnail?: string;
   /** Source reference images as data: URLs — kept for native conditioning later. */
   images: string[];
+  /** Scope to one project; undefined = global. */
+  projectId?: string;
 }
 
 /** Persist a new custom style; returns its public info. */
@@ -152,6 +157,7 @@ export function createStyle(input: CreateStyleInput): CustomStyleInfo {
     thumbnail: thumbRef,
     source: input.source,
     refs,
+    projectId: input.projectId,
     createdAt: Date.now(),
   };
 
@@ -165,13 +171,16 @@ export interface UpdateStylePatch {
   prompt?: string;
   /** `""` clears the negatives; undefined keeps them. */
   negativePrompt?: string;
+  /** `null` makes the style global; a project id scopes it; undefined keeps the scope. */
+  projectId?: string | null;
 }
 
 /**
- * Rename a style and/or edit its descriptor text; returns the updated public
- * info, or undefined for an unknown id. Mutates the found record in place —
- * `thumbnail` and `refs` must survive untouched, or the post-write asset prune
- * would silently delete the source images native styleRef conditioning reads.
+ * Rename a style, edit its descriptor text and/or change its scope; returns
+ * the updated public info, or undefined for an unknown id. Mutates the found
+ * record in place — `thumbnail` and `refs` must survive untouched, or the
+ * post-write asset prune would silently delete the source images native
+ * styleRef conditioning reads.
  */
 export function updateStyle(id: string, patch: UpdateStylePatch): CustomStyleInfo | undefined {
   const styles = readManifest();
@@ -180,6 +189,7 @@ export function updateStyle(id: string, patch: UpdateStylePatch): CustomStyleInf
   if (patch.label !== undefined) s.label = patch.label;
   if (patch.prompt !== undefined) s.prompt = patch.prompt;
   if (patch.negativePrompt !== undefined) s.negativePrompt = patch.negativePrompt || undefined;
+  if (patch.projectId !== undefined) s.projectId = patch.projectId ?? undefined;
   writeManifest(styles);
   return toInfo(s);
 }
@@ -189,6 +199,47 @@ export function deleteStyle(id: string): void {
   const styles = readManifest();
   const next = styles.filter((s) => s.id !== id);
   if (next.length !== styles.length) writeManifest(next);
+}
+
+/**
+ * Remove every style scoped to a project — the delete-project cascade, so a
+ * deleted project leaves no styles nothing can ever see again. Assets shared
+ * with a surviving style (content-hashed, so a copy references the same files)
+ * survive the prune; the rest go with the manifest write.
+ */
+export function deleteStylesForProject(projectId: string): void {
+  const styles = readManifest();
+  const next = styles.filter((s) => s.projectId !== projectId);
+  if (next.length !== styles.length) writeManifest(next);
+}
+
+/**
+ * Copy every style scoped to one project onto another — the duplicate-project
+ * cascade. A copy is just a new manifest record (fresh id, `projectId` = the
+ * duplicate) pointing at the SAME asset files; content-hashing makes the pixels
+ * shared, and the prune keeps any file at least one record references. Returns
+ * the old-id → new-id map so the caller can remap the duplicated project's
+ * session styleId.
+ */
+export function copyStylesForProject(
+  fromProjectId: string,
+  toProjectId: string,
+): Map<string, string> {
+  const styles = readManifest();
+  const idMap = new Map<string, string>();
+  const copies: CustomStyle[] = [];
+  for (const s of styles) {
+    if (s.projectId !== fromProjectId) continue;
+    const copy: CustomStyle = {
+      ...s,
+      id: `custom:${randomUUID().slice(0, 8)}`,
+      projectId: toProjectId,
+    };
+    idMap.set(s.id, copy.id);
+    copies.push(copy);
+  }
+  if (copies.length > 0) writeManifest([...styles, ...copies]);
+  return idMap;
 }
 
 /** Default label when the user doesn't name a style: "Custom style N". */

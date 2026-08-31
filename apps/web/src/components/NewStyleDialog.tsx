@@ -59,6 +59,8 @@ export function NewStyleDialog({
   const createStyle = useStyles((s) => s.create);
   const [refs, setRefs] = useState<Ref[]>([]);
   const [label, setLabel] = useState("");
+  // Default scope = the open project (chosen with the user); untick for global.
+  const [scopeToProject, setScopeToProject] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -68,6 +70,7 @@ export function NewStyleDialog({
   const reset = () => {
     setRefs([]);
     setLabel("");
+    setScopeToProject(true);
     setError(null);
     setBusy(false);
     setDragging(false);
@@ -95,6 +98,7 @@ export function NewStyleDialog({
       const info = await createStyle(
         refs.map((r) => r.dataUrl),
         label.trim() || undefined,
+        scopeToProject,
       );
       onCreated(info);
       onOpenChange(false);
@@ -295,6 +299,28 @@ export function NewStyleDialog({
                 }}
               />
             </div>
+
+            {/* scope */}
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                width: "fit-content",
+                marginTop: 14,
+                fontSize: 12,
+                color: "var(--text-muted)",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={scopeToProject}
+                onChange={(e) => setScopeToProject(e.target.checked)}
+                style={{ accentColor: "var(--accent)", margin: 0 }}
+              />
+              Only in this project
+            </label>
 
             {error && (
               <div style={{ fontSize: 11.5, color: "var(--danger, #e5484d)", marginTop: 10 }}>

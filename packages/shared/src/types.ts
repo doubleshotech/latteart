@@ -341,6 +341,8 @@ export interface CustomStyle {
   source: StyleSource;
   /** On-disk asset refs for the source reference images (native-conditioning door). */
   refs: string[];
+  /** Project this style is scoped to; absent = global (visible in every project). */
+  projectId?: string;
   createdAt: number;
 }
 
@@ -355,6 +357,8 @@ export interface CustomStyleInfo {
   label: string;
   thumbnail?: string;
   source: StyleSource;
+  /** Project this style is scoped to; absent = global. The picker filters on it. */
+  projectId?: string;
   createdAt: number;
 }
 
@@ -394,16 +398,20 @@ export interface CreateStyleApiRequest {
   thumbnail?: string;
   /** Optional explicit LLM provider id; omitted → the server picks the best available. */
   providerId?: string;
+  /** Scope the new style to this project; omitted = global. */
+  projectId?: string;
 }
 
 /**
  * Request body for `PATCH /api/styles/:id` — rename a custom style and/or edit
  * its descriptor text. Omitted fields keep their current value. `label` and
  * `prompt` must be non-empty when provided; `negativePrompt` may be `""` to
- * clear the negatives.
+ * clear the negatives. `projectId` is three-way: omitted keeps the current
+ * scope, `null` makes the style global, a project id scopes it to that project.
  */
 export interface UpdateStyleApiRequest {
   label?: string;
   prompt?: string;
   negativePrompt?: string;
+  projectId?: string | null;
 }
