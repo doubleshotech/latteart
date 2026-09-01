@@ -146,7 +146,10 @@ export function NewStyleDialog({
             </Dialog.Close>
           </div>
 
-          <div style={{ padding: "16px 20px 4px" }}>
+          {/* The reference grid grows with the list, so the fields scroll and
+              the footer stays reachable — .dlg-content caps the height and
+              clips, it does not scroll. */}
+          <div style={{ padding: "16px 20px 4px", overflowY: "auto", flex: "1 1 auto" }}>
             <RefImagePicker
               items={refs}
               disabled={busy}
@@ -236,6 +239,7 @@ export function NewStyleDialog({
               padding: "14px 20px",
               marginTop: 6,
               borderTop: "1px solid var(--border)",
+              flex: "none",
             }}
           >
             <Dialog.Close asChild>
