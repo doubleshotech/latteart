@@ -23,6 +23,9 @@ export async function fetchStyles(): Promise<CustomStyleInfo[]> {
   const res = await client.api.styles.$get(undefined, {
     init: { signal: AbortSignal.timeout(LIST_TIMEOUT_MS) },
   });
+  // Without this, a non-ok body would only fail by accident of not parsing —
+  // the caller's retry loop needs an honest rejection.
+  if (!res.ok) throw new Error(`could not list styles (${res.status})`);
   return (await res.json()) as CustomStyleInfo[];
 }
 

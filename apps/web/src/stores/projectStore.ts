@@ -83,9 +83,10 @@ function lastProjectId(): string | null {
 
 const DEBOUNCE_MS = 1500;
 const RETRY_MS = 5000;
-/** How long a boot request may hang before it counts as unreachable. The list
- * is a directory scan and should be instant; a project document carries every
- * layer's pixels inline, so it gets far longer. */
+/** How long a request may hang before it counts as unreachable — boot and
+ * mid-session CRUD alike. The list is a directory scan and should be instant;
+ * a project document carries every layer's pixels inline, so it gets far
+ * longer. */
 const LIST_TIMEOUT_MS = 4000;
 const DOC_TIMEOUT_MS = 15000;
 /**
@@ -106,7 +107,8 @@ function saveTimeout(bytes: number): number {
 }
 
 /**
- * A request, with a deadline. Every fetch this store makes needs one, because a
+ * A request, with a deadline. Every fetch this store awaits needs one (the
+ * deliberate exception is flushOnUnload's keepalive fire-and-forget), because a
  * backend that accepts the connection but never answers leaves the promise
  * pending forever, and both of this store's loops hang off a promise settling.
  *
@@ -268,7 +270,7 @@ async function flush() {
   useProject.setState({ status: "saving" });
   try {
     doc.thumbnail = await renderThumbnail(doc.layers);
-    // The body is ASCII (base64 pixels in JSON), so .length ≈ bytes on the wire.
+    // The body is dominated by ASCII base64 pixels, so .length ≈ bytes on the wire.
     const body = JSON.stringify(doc);
     const res = await fetchWithDeadline(`/api/projects/${id}`, saveTimeout(body.length), {
       method: "PUT",
@@ -647,10 +649,10 @@ export async function importProject(name: string, layers: Partial<Layer>[]): Pro
 }
 
 /** Rename a project. Renaming the open one updates the topbar in place. The
- * response is the full document, pixels included, so it gets the document
- * deadline rather than the list's. */
+ * server answers with the raw manifest (asset refs, not pixels), so this is a
+ * metadata round-trip and gets the list deadline. */
 export async function renameProject(id: string, name: string): Promise<void> {
-  const res = await fetchWithDeadline(`/api/projects/${id}`, DOC_TIMEOUT_MS, {
+  const res = await fetchWithDeadline(`/api/projects/${id}`, LIST_TIMEOUT_MS, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name }),

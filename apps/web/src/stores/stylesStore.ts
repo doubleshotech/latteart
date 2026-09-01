@@ -48,6 +48,13 @@ interface StylesState {
 const RETRY_MS = 5000;
 /** The pending refresh retry; one at a time, however many refreshes fail. */
 let retryTimer: number | null = null;
+/** Bumped by every local mutation (create/update/remove). A refresh whose
+ * request predates the bump resolves against a list that no longer reflects
+ * the library; replacing the list with it would drop the mutation — and for a
+ * create whose style is selected, PromptBar's fallback would read the vanished
+ * entry as deleted and persist a reset to "none". Stale successes are
+ * discarded; a later refresh reconciles against server truth. */
+let mutationSeq = 0;
 
 export const useStyles = create<StylesState>((set, get) => ({
   customStyles: [],
@@ -55,8 +62,10 @@ export const useStyles = create<StylesState>((set, get) => ({
   refreshFailed: false,
 
   refresh: async () => {
+    const seq = mutationSeq;
     try {
       const list = await fetchStyles();
+      if (seq !== mutationSeq) return; // stale — a mutation landed mid-flight
       // Any successful refresh — the online transition, a cascade's guard, this
       // loop itself — makes a pending retry redundant; cancelling it here is
       // deliberate, not a race.
@@ -86,18 +95,21 @@ export const useStyles = create<StylesState>((set, get) => ({
       images[0] ? makeThumbnail(images[0]) : Promise.resolve(undefined),
     ]);
     const info = await createStyle({ images, paletteHint, label, thumbnail, projectId });
+    mutationSeq++;
     set((s) => ({ customStyles: [info, ...s.customStyles] }));
     return info;
   },
 
   update: async (id, patch) => {
     const info = await updateStyle(id, patch);
+    mutationSeq++;
     set((s) => ({ customStyles: s.customStyles.map((x) => (x.id === id ? info : x)) }));
     return info;
   },
 
   remove: async (id) => {
     await deleteStyle(id);
+    mutationSeq++;
     set((s) => ({ customStyles: s.customStyles.filter((x) => x.id !== id) }));
   },
 }));
