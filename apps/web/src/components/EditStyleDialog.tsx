@@ -96,12 +96,12 @@ export function EditStyleDialog({
   const [error, setError] = useState<string | null>(null);
   const nextId = useRef(0);
 
-  // Prefill from the server whenever a style is opened. The fields are cleared
-  // first — the component stays mounted across opens, and stale values from a
-  // previous style must never be saveable onto this one (canSave requires a
-  // non-empty name and description, so a failed fetch leaves Save disabled).
-  // The cancelled flag keeps a stale response from filling a dialog that moved
-  // on to another id.
+  // Prefill from the server whenever a style is opened. Every field is cleared
+  // first, the reference list included — the component stays mounted across
+  // opens, and another style's values must never be saveable onto this one
+  // (canSave requires a name, a description and at least one image, so a failed
+  // fetch leaves Save disabled). The cancelled flag keeps a stale response from
+  // filling a dialog that moved on to another id.
   useEffect(() => {
     if (!styleId) return;
     let cancelled = false;

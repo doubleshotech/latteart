@@ -10,7 +10,9 @@ import { client } from "./client";
  * Custom-style library calls against the local backend. The list GET uses the
  * typed Hono RPC client; the per-style GET and the mutations use plain fetch
  * (like the keystore mutations) so we can shape a friendly error message from
- * the JSON body.
+ * the JSON body. Reference images are the exception — this module only builds
+ * their URL ({@link styleRefUrl}) and the browser loads the bytes through an
+ * `<img>`, so no full-size image passes through here.
  */
 
 /** How long the list GET may hang before it counts as failed. The list is
