@@ -1,16 +1,10 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { ImagePlus, Sparkles, X } from "lucide-react";
+import { Sparkles, X } from "lucide-react";
 import type { CustomStyleInfo } from "@latteart/shared";
-import { fileToDataUrl } from "../lib/palette";
 import { useProject } from "../stores/projectStore";
 import { useStyles } from "../stores/stylesStore";
-
-interface Ref {
-  id: number;
-  name: string;
-  dataUrl: string;
-}
+import { RefImagePicker, type RefImageItem } from "./RefImagePicker";
 
 const accentBtn: React.CSSProperties = {
   height: 34,
@@ -59,15 +53,12 @@ export function NewStyleDialog({
 }) {
   const createStyle = useStyles((s) => s.create);
   const projectId = useProject((s) => s.id);
-  const [refs, setRefs] = useState<Ref[]>([]);
+  const [refs, setRefs] = useState<RefImageItem[]>([]);
   const [label, setLabel] = useState("");
   // Default scope = the open project (chosen with the user); untick for global.
   const [scopeToProject, setScopeToProject] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [dragging, setDragging] = useState(false);
-  const nextId = useRef(0);
-  const fileInput = useRef<HTMLInputElement>(null);
 
   const reset = () => {
     setRefs([]);
@@ -75,21 +66,6 @@ export function NewStyleDialog({
     setScopeToProject(true);
     setError(null);
     setBusy(false);
-    setDragging(false);
-  };
-
-  const addFiles = async (files: FileList | File[]) => {
-    const images = [...files].filter((f) => f.type.startsWith("image/"));
-    if (images.length === 0) return;
-    setError(null);
-    const added = await Promise.all(
-      images.map(async (f) => ({
-        id: nextId.current++,
-        name: f.name,
-        dataUrl: await fileToDataUrl(f),
-      })),
-    );
-    setRefs((prev) => [...prev, ...added]);
   };
 
   const create = async () => {
@@ -98,7 +74,7 @@ export function NewStyleDialog({
     setError(null);
     try {
       const info = await createStyle(
-        refs.map((r) => r.dataUrl),
+        refs.map((r) => r.url),
         label.trim() || undefined,
         // An empty id (the brief pre-hydration window while the connection is
         // still resolving) deliberately falls back to global rather than
@@ -169,107 +145,19 @@ export function NewStyleDialog({
             </Dialog.Close>
           </div>
 
-          <div style={{ padding: "16px 20px 4px" }}>
-            {/* drop zone / picker */}
-            <button
-              type="button"
-              onClick={() => fileInput.current?.click()}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragging(true);
+          {/* The reference grid grows with the list, so the fields scroll and
+              the footer stays reachable — .dlg-content caps the height and
+              clips, it does not scroll. */}
+          <div style={{ padding: "16px 20px 4px", overflowY: "auto", flex: "1 1 auto" }}>
+            <RefImagePicker
+              items={refs}
+              disabled={busy}
+              onAdd={(added) => {
+                setError(null);
+                setRefs((prev) => [...prev, ...added]);
               }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDragging(false);
-                void addFiles(e.dataTransfer.files);
-              }}
-              style={{
-                width: "100%",
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                gap: 8,
-                padding: "22px 16px",
-                borderRadius: 12,
-                border: `1.5px dashed ${dragging ? "var(--accent)" : "var(--border-strong)"}`,
-                background: dragging
-                  ? "color-mix(in srgb, var(--accent) 8%, transparent)"
-                  : "var(--surface-2)",
-                color: "var(--text-muted)",
-                fontFamily: "inherit",
-                fontSize: 12.5,
-                cursor: "pointer",
-              }}
-            >
-              <ImagePlus size={22} strokeWidth={1.6} color="var(--text-faint)" />
-              <span>
-                <span style={{ color: "var(--accent)", fontWeight: 600 }}>Click to choose</span> or
-                drop images here
-              </span>
-              <span style={{ fontSize: 11, color: "var(--text-faint)" }}>
-                1–5 references work best · PNG, JPG, WebP
-              </span>
-            </button>
-            <input
-              ref={fileInput}
-              type="file"
-              accept="image/*"
-              multiple
-              hidden
-              onChange={(e) => {
-                if (e.target.files) void addFiles(e.target.files);
-                e.target.value = "";
-              }}
+              onRemove={(key) => setRefs((prev) => prev.filter((x) => x.key !== key))}
             />
-
-            {/* thumbnails */}
-            {refs.length > 0 && (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
-                {refs.map((r) => (
-                  <div
-                    key={r.id}
-                    style={{
-                      position: "relative",
-                      width: 64,
-                      height: 64,
-                      borderRadius: 8,
-                      overflow: "hidden",
-                      border: "1px solid var(--border)",
-                    }}
-                  >
-                    <img
-                      src={r.dataUrl}
-                      alt={r.name}
-                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                    />
-                    <button
-                      type="button"
-                      aria-label={`Remove ${r.name}`}
-                      onClick={() => setRefs((prev) => prev.filter((x) => x.id !== r.id))}
-                      style={{
-                        position: "absolute",
-                        top: 3,
-                        right: 3,
-                        width: 18,
-                        height: 18,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        borderRadius: "50%",
-                        background: "rgba(0,0,0,.6)",
-                        border: "none",
-                        color: "#fff",
-                        cursor: "pointer",
-                        padding: 0,
-                      }}
-                    >
-                      <X size={11} strokeWidth={2.4} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
 
             {/* name */}
             <div style={{ marginTop: 14 }}>
@@ -343,6 +231,7 @@ export function NewStyleDialog({
               padding: "14px 20px",
               marginTop: 6,
               borderTop: "1px solid var(--border)",
+              flex: "none",
             }}
           >
             <Dialog.Close asChild>

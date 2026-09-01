@@ -81,6 +81,106 @@ describe("custom-style library on disk", () => {
     assert.equal(lib.getStyleDetail(created.id)?.prompt, "pastel dawn");
   });
 
+  it("getStyleDetail exposes the reference tokens, and readStyleRef serves their bytes", () => {
+    const detail = lib.getStyleDetail(created.id);
+    assert.equal(detail?.refs.length, 2);
+    // Tokens, not pixels: a full-size reference must never ride in the payload.
+    assert.ok(detail?.refs.every((r) => /^asset:[a-f0-9]{64}\.png$/.test(r)));
+    // The whole token round-trips — readStyleRef matches by equality, so the
+    // ref format never has to be parsed by whoever holds it.
+    const read = lib.readStyleRef(created.id, detail!.refs[0]!);
+    assert.equal(read?.mime, "image/png");
+    assert.equal(read?.bytes.toString("utf8"), "png-bytes-ref-1");
+  });
+
+  it("readStyleRef refuses a ref this style doesn't hold", () => {
+    const other = lib.createStyle({
+      label: "Other",
+      prompt: "other",
+      source: "heuristic",
+      images: [dataUrl("ref-other")],
+    });
+    const theirs = lib.getStyleDetail(other.id)!.refs[0]!;
+    // The ref is readable for its OWN style — the scoping is what makes this a
+    // miss, so one style can't read another's assets by naming its token.
+    assert.ok(lib.readStyleRef(other.id, theirs));
+    assert.equal(lib.readStyleRef(created.id, theirs), undefined);
+    // A bare filename is not a ref this style holds either, so the equality
+    // match is also what keeps a name from walking out of the directory.
+    assert.equal(lib.readStyleRef(created.id, theirs.slice("asset:".length)), undefined);
+    assert.equal(lib.readStyleRef(created.id, "asset:../styles.json"), undefined);
+    lib.deleteStyle(other.id);
+  });
+
+  it("storeStyleAssets keeps known refs, writes new images, and collapses duplicates", () => {
+    const before = lib.getStyleDetail(created.id)!.refs;
+    const { stored, fault } = lib.storeStyleAssets(created.id, {
+      // keep the second, add one, and repeat both — a repeat content-hashes to
+      // one file, so the manifest must not list it twice.
+      refs: [before[1]!, dataUrl("ref-3"), before[1]!, dataUrl("ref-3")],
+    });
+    assert.equal(fault, undefined);
+    assert.equal(stored?.refs?.length, 2);
+    assert.equal(stored?.refs?.[0], before[1]);
+    assert.notEqual(stored?.refs?.[1], before[0]);
+  });
+
+  it("storeStyleAssets names which input it could resolve to nothing", () => {
+    const before = lib.getStyleDetail(created.id)!.refs;
+    // A token this style doesn't have (it's another style's, or was already
+    // removed), a bare string, and an undecodable data: URL all fail rather
+    // than drop silently — and the three causes stay apart, so the route can
+    // say "invalid thumbnail" instead of blaming the reference images.
+    assert.equal(
+      lib.storeStyleAssets(created.id, { refs: [`asset:${"a".repeat(64)}.png`] }).fault,
+      "refs",
+    );
+    assert.equal(lib.storeStyleAssets(created.id, { refs: [...before, "hello"] }).fault, "refs");
+    assert.equal(
+      lib.storeStyleAssets(created.id, { thumbnail: "data:text/plain;base64,aGk=" }).fault,
+      "thumbnail",
+    );
+    assert.equal(lib.storeStyleAssets("custom:missing", { refs: [] }).fault, "no-such-style");
+  });
+
+  it("a reference edit replaces the images and prunes only the dropped one", () => {
+    const before = lib.getStyleDetail(created.id)!.refs;
+    const { stored } = lib.storeStyleAssets(created.id, {
+      refs: [before[1]!, dataUrl("ref-3")],
+      thumbnail: dataUrl("thumb-2"),
+    });
+    const info = lib.updateStyle(created.id, { refs: stored!.refs, thumbnail: stored!.thumbnail });
+    const after = lib.getStyleDetail(created.id)!;
+    assert.deepEqual(after.refs, stored!.refs);
+    // The kept ref still resolves to pixels, so the prune spared its file.
+    assert.equal(lib.resolveCustomStyle(created.id, true)?.refs.length, 2);
+    assert.ok(info?.thumbnail?.startsWith("data:image/png;base64,"));
+    // ref-1 and the old thumbnail are unreferenced now; ref-2, ref-3 and the
+    // new thumbnail remain.
+    assert.equal(readdirSync(ASSETS_DIR).length, 3);
+  });
+
+  it("a later edit that omits refs and thumbnail leaves both untouched", () => {
+    const before = lib.getStyleDetail(created.id)!;
+    lib.updateStyle(created.id, { label: "Rain city" });
+    const after = lib.getStyleDetail(created.id)!;
+    assert.deepEqual(after.refs, before.refs);
+    assert.equal(after.thumbnail, before.thumbnail);
+    assert.equal(readdirSync(ASSETS_DIR).length, 3);
+  });
+
+  it("a re-describe replaces the descriptor and records the vision source", () => {
+    lib.updateStyle(created.id, {
+      prompt: "hand-inked, halftone dots",
+      negativePrompt: "",
+      source: "vision",
+    });
+    const detail = lib.getStyleDetail(created.id);
+    assert.equal(detail?.prompt, "hand-inked, halftone dots");
+    assert.equal(detail?.negativePrompt, undefined);
+    assert.equal(detail?.source, "vision");
+  });
+
   it("deleteStyle prunes the now-unreferenced assets", () => {
     lib.deleteStyle(created.id);
     assert.equal(lib.listStyles().length, 0);

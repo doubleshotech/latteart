@@ -64,18 +64,32 @@ export function writeAsset(assetsDir: string, dataUrl: string): string | null {
 }
 
 /**
+ * Read an `asset:` ref's bytes and mime from `assetsDir`, or undefined if the
+ * ref is malformed or its file has vanished. Serving the bytes straight to a
+ * client (rather than a data: URL) keeps a full-size image out of base64 — see
+ * the style refs route.
+ */
+export function readAssetBytes(
+  assetsDir: string,
+  ref: string | undefined,
+): { bytes: Buffer; mime: string } | undefined {
+  const file = ref ? assetRefFile(ref) : null;
+  if (!file) return undefined;
+  try {
+    const bytes = readFileSync(join(assetsDir, file));
+    return { bytes, mime: extToMime(file.split(".").at(-1)!) };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Rehydrate an `asset:` ref from `assetsDir` back to a data: URL, or undefined
  * if the ref is malformed or its file has vanished (so callers can keep the
  * surrounding record and simply drop the pixels).
  */
 export function readAsset(assetsDir: string, ref: string | undefined): string | undefined {
-  const file = ref ? assetRefFile(ref) : null;
-  if (!file) return undefined;
-  try {
-    const bytes = readFileSync(join(assetsDir, file));
-    const mime = extToMime(file.split(".").at(-1)!);
-    return `data:${mime};base64,${bytes.toString("base64")}`;
-  } catch {
-    return undefined;
-  }
+  const read = readAssetBytes(assetsDir, ref);
+  if (!read) return undefined;
+  return `data:${read.mime};base64,${read.bytes.toString("base64")}`;
 }

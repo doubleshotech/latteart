@@ -10,7 +10,9 @@ import { client } from "./client";
  * Custom-style library calls against the local backend. The list GET uses the
  * typed Hono RPC client; the per-style GET and the mutations use plain fetch
  * (like the keystore mutations) so we can shape a friendly error message from
- * the JSON body.
+ * the JSON body. Reference images are the exception — this module only builds
+ * their URL ({@link styleRefUrl}) and the browser loads the bytes through an
+ * `<img>`, so no full-size image passes through here.
  */
 
 /** How long the list GET may hang before it counts as failed. The list is
@@ -68,6 +70,26 @@ export async function updateStyle(
   });
   if (!res.ok) await throwApiError(res, "Couldn't save the style.");
   return (await res.json()) as CustomStyleInfo;
+}
+
+/**
+ * URL of one of a style's reference images. `ref` is an opaque token from
+ * {@link CustomStyleDetail.refs} and travels WHOLE — the ref format is the
+ * server's, and nothing here parses it; the server matches the token against
+ * that style's own refs. An `<img src>` streams the bytes, so a full-size
+ * reference never reaches the client as base64 — and the token is
+ * content-hashed, so the browser caches it.
+ */
+export function styleRefUrl(id: string, ref: string): string {
+  return `/api/styles/${encodeURIComponent(id)}/refs/${encodeURIComponent(ref)}`;
+}
+
+/** Re-distill the descriptor from the style's own reference images (vision
+ * models only — the server refuses rather than downgrade to the heuristic). */
+export async function describeStyle(id: string): Promise<CustomStyleDetail> {
+  const res = await fetch(`/api/styles/${encodeURIComponent(id)}/describe`, { method: "POST" });
+  if (!res.ok) await throwApiError(res, "Couldn't read the reference images.");
+  return (await res.json()) as CustomStyleDetail;
 }
 
 export async function deleteStyle(id: string): Promise<void> {
