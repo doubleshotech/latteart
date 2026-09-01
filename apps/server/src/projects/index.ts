@@ -269,6 +269,22 @@ export function duplicateProject(id: string, name?: string): ProjectDoc | null {
   return copy;
 }
 
+/**
+ * Point a project's session style at a different id — the duplicate-project
+ * cascade rewrites the copy's selection onto its own copied style, so it never
+ * references a style scoped to the source project. Null when the project
+ * doesn't exist. Deliberately does NOT bump updatedAt (unlike renameProject):
+ * this is a system rewrite inside the duplicate, not a user edit, and the
+ * copy's timestamps should stay as duplicateProject set them.
+ */
+export function restyleSession(id: string, styleId: string): ProjectDoc | null {
+  const doc = readManifest(id);
+  if (!doc) return null;
+  const updated: ProjectDoc = { ...doc, session: { ...doc.session, styleId } };
+  writeManifest(id, updated);
+  return updated;
+}
+
 /** Delete a project and everything under it. False when it didn't exist. */
 export function deleteProject(id: string): boolean {
   const dir = projectDir(id);

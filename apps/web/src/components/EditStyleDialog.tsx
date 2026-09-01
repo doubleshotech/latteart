@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { fetchStyleDetail } from "../api/styles";
+import { useProject } from "../stores/projectStore";
 import { useStyles } from "../stores/stylesStore";
 
 const accentBtn: React.CSSProperties = {
@@ -66,9 +67,13 @@ export function EditStyleDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const update = useStyles((s) => s.update);
+  const projectId = useProject((s) => s.id);
   const [label, setLabel] = useState("");
   const [prompt, setPrompt] = useState("");
   const [negativePrompt, setNegativePrompt] = useState("");
+  // Scope row. The picker only lists global styles and the open project's own,
+  // so "checked" simply means scoped-to-this-project vs global.
+  const [scopeToProject, setScopeToProject] = useState(false);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,6 +90,7 @@ export function EditStyleDialog({
     setLabel("");
     setPrompt("");
     setNegativePrompt("");
+    setScopeToProject(false);
     setLoading(true);
     setError(null);
     fetchStyleDetail(styleId)
@@ -93,6 +99,7 @@ export function EditStyleDialog({
         setLabel(d.label);
         setPrompt(d.prompt);
         setNegativePrompt(d.negativePrompt ?? "");
+        setScopeToProject(!!d.projectId && d.projectId === useProject.getState().id);
       })
       .catch((err: Error) => {
         if (!cancelled) setError(err.message || "Couldn't load the style.");
@@ -116,6 +123,10 @@ export function EditStyleDialog({
         label: label.trim(),
         prompt: prompt.trim(),
         negativePrompt: negativePrompt.trim(),
+        // Three-way on the wire, two states here: the open project's id or
+        // global (null). Guarded on a known project id so a not-yet-hydrated
+        // boot can never silently re-scope a style.
+        ...(projectId ? { projectId: scopeToProject ? projectId : null } : {}),
       });
       onOpenChange(false);
     } catch (err) {
@@ -210,6 +221,29 @@ export function EditStyleDialog({
                 style={textField}
               />
             </div>
+
+            {/* scope */}
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                width: "fit-content",
+                marginTop: 14,
+                fontSize: 12,
+                color: "var(--text-muted)",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={scopeToProject}
+                onChange={(e) => setScopeToProject(e.target.checked)}
+                disabled={loading}
+                style={{ accentColor: "var(--accent)", margin: 0 }}
+              />
+              Only in this project
+            </label>
 
             {error && (
               <div style={{ fontSize: 11.5, color: "var(--danger, #e5484d)", marginTop: 10 }}>

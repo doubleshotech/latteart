@@ -18,10 +18,11 @@ import { enhancePrompt } from "../api/enhance";
 import { ACTIONS } from "../lib/actions";
 import { useDocument } from "../stores/documentStore";
 import { useGeneration, type QueuedJob } from "../stores/generationStore";
+import { useProject } from "../stores/projectStore";
 import { useProviders } from "../stores/providersStore";
 import { useSegmentLabel } from "../stores/segmentStore";
 import { SIZE_PRESETS, useSession } from "../stores/sessionStore";
-import { useStyles } from "../stores/stylesStore";
+import { useStyles, visibleStyles } from "../stores/stylesStore";
 import { useViewport } from "../stores/viewportStore";
 import { EditStyleDialog } from "./EditStyleDialog";
 import { NewStyleDialog } from "./NewStyleDialog";
@@ -369,8 +370,15 @@ export function PromptBar() {
   const start = useGeneration((s) => s.start);
   const setError = useGeneration((s) => s.setError);
 
-  const customStyles = useStyles((s) => s.customStyles);
+  const allCustomStyles = useStyles((s) => s.customStyles);
+  const stylesLoaded = useStyles((s) => s.loaded);
+  const stylesRefreshFailed = useStyles((s) => s.refreshFailed);
   const removeStyle = useStyles((s) => s.remove);
+  const projectId = useProject((s) => s.id);
+  // Only the styles this project can see: globals plus its own scoped ones. The
+  // menu AND the label lookup below both use this set, so a style scoped to
+  // another project reads as dangling instead of quietly composing.
+  const customStyles = visibleStyles(allCustomStyles, projectId);
 
   const [prompt, setPrompt] = useState("");
   const [focused, setFocused] = useState(false);
@@ -400,6 +408,17 @@ export function PromptBar() {
     measure();
     return () => ro.disconnect();
   }, [setChromeBottom]);
+
+  // A selected custom style this project can't see — deleted, or scoped to
+  // another project — falls back to None once the library is known. Without
+  // this, a persisted session could keep composing a style no picker shows.
+  // Held off while the last refresh FAILED: a stale list can't tell "deleted"
+  // from "not fetched yet", and a wrong reset autosaves over real server state.
+  const selectedVisible =
+    !styleId.startsWith("custom:") || customStyles.some((s) => s.id === styleId);
+  useEffect(() => {
+    if (stylesLoaded && !stylesRefreshFailed && projectId && !selectedVisible) setStyle("none");
+  }, [stylesLoaded, stylesRefreshFailed, projectId, selectedVisible, setStyle]);
 
   const active = providers.find((p) => p.id === providerId);
   // The active style label — a custom style wins over a preset of the same id
@@ -669,6 +688,25 @@ export function PromptBar() {
                   >
                     {s.label}
                   </span>
+                  {s.projectId && (
+                    <span
+                      title="Only in this project"
+                      style={{
+                        fontSize: 8.5,
+                        fontWeight: 700,
+                        letterSpacing: 0.4,
+                        textTransform: "uppercase",
+                        color: "var(--text-faint)",
+                        border: "1px solid var(--border)",
+                        borderRadius: 4,
+                        padding: "1px 3px",
+                        lineHeight: 1,
+                        flex: "none",
+                      }}
+                    >
+                      project
+                    </span>
+                  )}
                   <button
                     type="button"
                     aria-label={`Edit ${s.label}`}

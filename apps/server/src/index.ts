@@ -37,11 +37,14 @@ import {
   listProjects,
   loadProject,
   renameProject,
+  restyleSession,
   saveProject,
 } from "./projects/index.ts";
 import {
+  copyStylesForProject,
   createStyle,
   deleteStyle,
+  deleteStylesForProject,
   getStyleDetail,
   listStyles,
   nextStyleLabel,
@@ -254,13 +257,36 @@ const routes = app
     const body = await c.req.json<{ name?: string }>().catch(() => ({}) as { name?: string });
     const copy = duplicateProject(id, body.name);
     if (!copy) return c.json({ error: "no such project" }, 404);
-    return c.json(copy, 201);
+    // Cascade: styles scoped to the source get copies scoped to the duplicate,
+    // and a session pointing at one is remapped onto its copy — otherwise the
+    // duplicate would open with a style its own picker can't show. The project
+    // copy above is the primary act; a cascade failure (disk error) must not
+    // turn it into a 500 for a duplicate that exists. Un-remapped, the copy's
+    // session points at a style scoped elsewhere, which the client already
+    // resolves by falling back to "none".
+    let doc = copy;
+    try {
+      const styleIds = copyStylesForProject(id, copy.id);
+      const remapped = copy.session.styleId ? styleIds.get(copy.session.styleId) : undefined;
+      if (remapped) doc = restyleSession(copy.id, remapped) ?? copy;
+    } catch (err) {
+      console.error("style cascade failed for duplicated project", copy.id, err);
+    }
+    return c.json(doc, 201);
   })
 
   .delete("/api/projects/:id", (c) => {
     const id = projectId(c);
     if (!id) return c.json({ error: "invalid project id" }, 400);
     if (!deleteProject(id)) return c.json({ error: "no such project" }, 404);
+    // Cascade: styles scoped to the deleted project would be invisible forever.
+    // The delete above already happened, so a cascade failure must not report
+    // it as failed — the orphaned styles are the (logged) lesser damage.
+    try {
+      deleteStylesForProject(id);
+    } catch (err) {
+      console.error("style cascade failed for deleted project", id, err);
+    }
     return c.json({ ok: true });
   })
 
@@ -466,6 +492,12 @@ const routes = app
 
     const label = String(body.label ?? "").trim() || nextStyleLabel();
     const providerId = body.providerId === undefined ? undefined : String(body.providerId);
+    // Scope: a project id restricts the style to that project's picker; omitted
+    // (or a type-violating null, which String() would turn into a style scoped
+    // to the project "null") = global. Same format guard as /api/projects/:id.
+    const scope = body.projectId == null ? undefined : String(body.projectId);
+    if (scope !== undefined && !isValidProjectId(scope))
+      return c.json({ error: "invalid project id" }, 400);
     const ctxFor = (id: string): LLMContext => ({ baseUrl: getSecretValue(id) });
 
     // Vision distillation when available, else the offline heuristic. Either
@@ -493,6 +525,7 @@ const routes = app
       source,
       thumbnail: typeof body.thumbnail === "string" ? body.thumbnail : undefined,
       images,
+      projectId: scope,
     });
     return c.json(info);
   })
@@ -504,11 +537,12 @@ const routes = app
     return c.json(detail);
   })
 
-  // Rename a custom style and/or edit its descriptor. Omitted fields keep
-  // their value; a provided-but-empty label or prompt is rejected rather than
-  // silently replaced (create derives a default label, update must not), and a
-  // body with no recognized field at all — malformed JSON included — is a 400,
-  // not a 200 that quietly rewrites the manifest.
+  // Rename a custom style, edit its descriptor and/or change its scope.
+  // Omitted fields keep their value; a provided-but-empty label or prompt is
+  // rejected rather than silently replaced (create derives a default label,
+  // update must not); `projectId` is three-way (omitted keeps, null → global,
+  // id → scoped); and a body with no recognized field at all — malformed JSON
+  // included — is a 400, not a 200 that quietly rewrites the manifest.
   .patch("/api/styles/:id", async (c) => {
     if (!getStyleDetail(c.req.param("id"))) return c.json({ error: "no such style" }, 404);
     const body = await c.req
@@ -527,6 +561,15 @@ const routes = app
     }
     if (body.negativePrompt !== undefined)
       patch.negativePrompt = String(body.negativePrompt).trim();
+    if (body.projectId !== undefined) {
+      if (body.projectId === null) {
+        patch.projectId = null;
+      } else {
+        const scope = String(body.projectId);
+        if (!isValidProjectId(scope)) return c.json({ error: "invalid project id" }, 400);
+        patch.projectId = scope;
+      }
+    }
     if (Object.keys(patch).length === 0) return c.json({ error: "nothing to update" }, 400);
     const info = updateStyle(c.req.param("id"), patch);
     if (!info) return c.json({ error: "no such style" }, 404);

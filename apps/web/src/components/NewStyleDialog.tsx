@@ -3,6 +3,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { ImagePlus, Sparkles, X } from "lucide-react";
 import type { CustomStyleInfo } from "@latteart/shared";
 import { fileToDataUrl } from "../lib/palette";
+import { useProject } from "../stores/projectStore";
 import { useStyles } from "../stores/stylesStore";
 
 interface Ref {
@@ -57,8 +58,11 @@ export function NewStyleDialog({
   onCreated: (info: CustomStyleInfo) => void;
 }) {
   const createStyle = useStyles((s) => s.create);
+  const projectId = useProject((s) => s.id);
   const [refs, setRefs] = useState<Ref[]>([]);
   const [label, setLabel] = useState("");
+  // Default scope = the open project (chosen with the user); untick for global.
+  const [scopeToProject, setScopeToProject] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -68,6 +72,7 @@ export function NewStyleDialog({
   const reset = () => {
     setRefs([]);
     setLabel("");
+    setScopeToProject(true);
     setError(null);
     setBusy(false);
     setDragging(false);
@@ -95,6 +100,10 @@ export function NewStyleDialog({
       const info = await createStyle(
         refs.map((r) => r.dataUrl),
         label.trim() || undefined,
+        // An empty id (the brief pre-hydration window while the connection is
+        // still resolving) deliberately falls back to global rather than
+        // scoping to a project that doesn't exist.
+        scopeToProject ? projectId || undefined : undefined,
       );
       onCreated(info);
       onOpenChange(false);
@@ -295,6 +304,28 @@ export function NewStyleDialog({
                 }}
               />
             </div>
+
+            {/* scope */}
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                width: "fit-content",
+                marginTop: 14,
+                fontSize: 12,
+                color: "var(--text-muted)",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={scopeToProject}
+                onChange={(e) => setScopeToProject(e.target.checked)}
+                style={{ accentColor: "var(--accent)", margin: 0 }}
+              />
+              Only in this project
+            </label>
 
             {error && (
               <div style={{ fontSize: 11.5, color: "var(--danger, #e5484d)", marginTop: 10 }}>
