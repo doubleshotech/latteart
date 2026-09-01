@@ -493,8 +493,9 @@ const routes = app
     const label = String(body.label ?? "").trim() || nextStyleLabel();
     const providerId = body.providerId === undefined ? undefined : String(body.providerId);
     // Scope: a project id restricts the style to that project's picker; omitted
-    // = global. Same format guard as the /api/projects/:id routes.
-    const scope = body.projectId === undefined ? undefined : String(body.projectId);
+    // (or a type-violating null, which String() would turn into a style scoped
+    // to the project "null") = global. Same format guard as /api/projects/:id.
+    const scope = body.projectId == null ? undefined : String(body.projectId);
     if (scope !== undefined && !isValidProjectId(scope))
       return c.json({ error: "invalid project id" }, 400);
     const ctxFor = (id: string): LLMContext => ({ baseUrl: getSecretValue(id) });

@@ -372,6 +372,7 @@ export function PromptBar() {
 
   const allCustomStyles = useStyles((s) => s.customStyles);
   const stylesLoaded = useStyles((s) => s.loaded);
+  const stylesRefreshFailed = useStyles((s) => s.refreshFailed);
   const removeStyle = useStyles((s) => s.remove);
   const projectId = useProject((s) => s.id);
   // Only the styles this project can see: globals plus its own scoped ones. The
@@ -411,11 +412,13 @@ export function PromptBar() {
   // A selected custom style this project can't see — deleted, or scoped to
   // another project — falls back to None once the library is known. Without
   // this, a persisted session could keep composing a style no picker shows.
+  // Held off while the last refresh FAILED: a stale list can't tell "deleted"
+  // from "not fetched yet", and a wrong reset autosaves over real server state.
   const selectedVisible =
     !styleId.startsWith("custom:") || customStyles.some((s) => s.id === styleId);
   useEffect(() => {
-    if (stylesLoaded && projectId && !selectedVisible) setStyle("none");
-  }, [stylesLoaded, projectId, selectedVisible, setStyle]);
+    if (stylesLoaded && !stylesRefreshFailed && projectId && !selectedVisible) setStyle("none");
+  }, [stylesLoaded, stylesRefreshFailed, projectId, selectedVisible, setStyle]);
 
   const active = providers.find((p) => p.id === providerId);
   // The active style label — a custom style wins over a preset of the same id

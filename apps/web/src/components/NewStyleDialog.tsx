@@ -100,8 +100,8 @@ export function NewStyleDialog({
       const info = await createStyle(
         refs.map((r) => r.dataUrl),
         label.trim() || undefined,
-        // An empty id (project not yet hydrated — unreachable once the studio
-        // is interactive) deliberately falls back to global rather than
+        // An empty id (the brief pre-hydration window while the connection is
+        // still resolving) deliberately falls back to global rather than
         // scoping to a project that doesn't exist.
         scopeToProject ? projectId || undefined : undefined,
       );

@@ -518,18 +518,17 @@ async function openProject(id: string, opts: { saveOutgoing: boolean }): Promise
     // CLIENT list is stale, not that the style is gone — a duplicate's freshly
     // remapped copy, or a style another tab created. Refresh before hydrating,
     // or the picker's not-visible fallback reads staleness as "deleted" and
-    // persists a reset to "none" over real server state. Best-effort: if the
-    // refresh fails the open still proceeds, and a style that is then truly
-    // absent resets exactly as the fallback intends.
+    // persists a reset to "none" over real server state. The open proceeds
+    // either way: a failed refresh raises stylesStore.refreshFailed, which
+    // holds that fallback off until a refresh succeeds. Deliberately checks
+    // the FULL list, not visibleStyles — the question is whether the client
+    // knows the id at all.
     const { styleId } = doc.session;
     if (
       styleId.startsWith("custom:") &&
       !useStyles.getState().customStyles.some((s) => s.id === styleId)
     ) {
-      await useStyles
-        .getState()
-        .refresh()
-        .catch(() => {});
+      await useStyles.getState().refresh();
     }
 
     // Drop anything the outgoing document scheduled while we were awaiting —
@@ -662,9 +661,11 @@ export async function duplicateProject(id: string): Promise<void> {
   });
   if (!res.ok) throw new Error("could not duplicate the project");
   const doc = (await res.json()) as ProjectDoc;
-  // The server cascade copied the source's project-scoped styles and remapped
-  // the copy's session styleId onto its own copy; openProject notices the
-  // unknown custom id and refreshes the style library before hydrating.
+  // The server cascade copied the source's project-scoped styles, so refresh
+  // UNCONDITIONALLY — copies exist even when the session selects none of them,
+  // and openProject's guard only fires for an unknown selected id. (When one
+  // IS selected and this refresh fails, that guard is the retry.)
+  await useStyles.getState().refresh();
   await openProject(doc.id, { saveOutgoing: true });
 }
 
@@ -678,13 +679,9 @@ export async function deleteProject(id: string): Promise<void> {
   const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error("could not delete the project");
   // The server cascade dropped the styles scoped to the deleted project; keep
-  // the client library honest. Best-effort with the rejection swallowed —
-  // every picker filters them out anyway, so a failed refresh only leaves
-  // invisible entries until reload.
-  void useStyles
-    .getState()
-    .refresh()
-    .catch(() => {});
+  // the client library honest. Best-effort — every picker filters them out
+  // anyway, so a failed refresh only leaves invisible entries until reload.
+  void useStyles.getState().refresh();
 
   if (!wasOpen) {
     await fetchProjects();

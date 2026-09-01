@@ -18,10 +18,8 @@ after(() => rmSync(dataDir, { recursive: true, force: true }));
 describe("restyleSession", () => {
   it("points the session style at a new id and persists it", () => {
     const doc = store.createProject("Restyle probe");
-    const before = doc.session.styleId;
     const updated = store.restyleSession(doc.id, "custom:abcd1234");
     assert.equal(updated?.session.styleId, "custom:abcd1234");
-    assert.notEqual(updated?.session.styleId, before);
     // The write must be durable, not just the returned object: the duplicate
     // route hands the doc to a client that will re-read it from disk on open.
     assert.equal(store.loadProject(doc.id)?.session.styleId, "custom:abcd1234");

@@ -10,14 +10,20 @@ import { extractPaletteHint, makeThumbnail } from "../lib/palette";
  * the create request; the descriptor itself is distilled server-side. The store
  * holds the FULL library, project-scoped styles included — visibility filtering
  * is the picker's job (see visibleStyles), so a project switch needs no refetch.
- * Two exceptions in projectStore, where server-side cascades change the library
- * itself: openProject refreshes when the incoming session selects a custom id
- * this store doesn't know (a duplicate's remapped copy, another tab's style),
- * and deleteProject refreshes after the delete cascade.
+ * The list can still go stale when the library changes outside this store —
+ * the duplicate/delete cascades rewrite it server-side, and a second tab can
+ * add to it — so projectStore refreshes around duplicate, delete, and any
+ * open whose incoming session selects a custom id this store doesn't know.
  */
 interface StylesState {
   customStyles: CustomStyleInfo[];
   loaded: boolean;
+  /** True while the LAST refresh attempt failed — the list may be stale, so
+   * absence from it must not be read as deletion (see PromptBar's fallback).
+   * Cleared by the next successful refresh. */
+  refreshFailed: boolean;
+  /** Re-fetch the library. Never rejects: a failure sets {@link refreshFailed}
+   * and keeps the current list, since every caller treats it as best-effort. */
   refresh: () => Promise<void>;
   /** Distill a new style from reference image data: URLs; returns its info so the
    * caller (the dialog) can select it. Throws with a user-facing message.
@@ -38,10 +44,15 @@ interface StylesState {
 export const useStyles = create<StylesState>((set) => ({
   customStyles: [],
   loaded: false,
+  refreshFailed: false,
 
   refresh: async () => {
-    const list = await fetchStyles();
-    set({ customStyles: list, loaded: true });
+    try {
+      const list = await fetchStyles();
+      set({ customStyles: list, loaded: true, refreshFailed: false });
+    } catch {
+      set({ refreshFailed: true });
+    }
   },
 
   create: async (images, label, projectId) => {
@@ -68,9 +79,11 @@ export const useStyles = create<StylesState>((set) => ({
 
 /**
  * The styles one project's picker shows: every global style plus the ones
- * scoped to that project. The single visibility rule — every surface that lists
- * or resolves custom styles client-side goes through here, so "in the library
- * but not in this project" can't drift between the menu and the selection.
+ * scoped to that project. The single visibility rule — every surface that
+ * DISPLAYS or selects custom styles goes through here, so "in the library but
+ * not in this project" can't drift between the menu and the selection. One
+ * deliberate non-consumer: openProject's staleness guard checks the FULL list,
+ * because it asks "does the client know this id at all", not "is it visible".
  */
 export function visibleStyles(styles: CustomStyleInfo[], projectId: string): CustomStyleInfo[] {
   return styles.filter((s) => !s.projectId || s.projectId === projectId);
