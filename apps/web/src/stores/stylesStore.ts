@@ -22,8 +22,9 @@ interface StylesState {
    * absence from it must not be read as deletion (see PromptBar's fallback).
    * Cleared by the next successful refresh. */
   refreshFailed: boolean;
-  /** Re-fetch the library. Never rejects: a failure sets {@link refreshFailed}
-   * and keeps the current list, since every caller treats it as best-effort. */
+  /** Re-fetch the library. Never rejects: a failure sets {@link refreshFailed},
+   * keeps the current list, and arms a retry loop, since every caller treats it
+   * as best-effort. */
   refresh: () => Promise<void>;
   /** Distill a new style from reference image data: URLs; returns its info so the
    * caller (the dialog) can select it. Throws with a user-facing message.
@@ -41,7 +42,14 @@ interface StylesState {
   remove: (id: string) => Promise<void>;
 }
 
-export const useStyles = create<StylesState>((set) => ({
+/** Same cadence as projectStore's boot and save retries. Defined locally, not
+ * imported: projectStore imports this store for its CRUD cascades, so the
+ * dependency runs projectStore → stylesStore and importing back is a cycle. */
+const RETRY_MS = 5000;
+/** The pending refresh retry; one at a time, however many refreshes fail. */
+let retryTimer: number | null = null;
+
+export const useStyles = create<StylesState>((set, get) => ({
   customStyles: [],
   loaded: false,
   refreshFailed: false,
@@ -49,9 +57,26 @@ export const useStyles = create<StylesState>((set) => ({
   refresh: async () => {
     try {
       const list = await fetchStyles();
+      // Any successful refresh — the online transition, a cascade's guard, this
+      // loop itself — makes a pending retry redundant; cancelling it here is
+      // deliberate, not a race.
+      if (retryTimer !== null) {
+        window.clearTimeout(retryTimer);
+        retryTimer = null;
+      }
       set({ customStyles: list, loaded: true, refreshFailed: false });
     } catch {
+      // Keep the current list and retry on a loop. Without the loop, a boot
+      // fetch that fails while the backend is otherwise reachable left
+      // `loaded: false` for the whole session — custom styles invisible in the
+      // picker while a persisted selection kept composing server-side.
       set({ refreshFailed: true });
+      if (retryTimer === null) {
+        retryTimer = window.setTimeout(() => {
+          retryTimer = null;
+          void get().refresh();
+        }, RETRY_MS);
+      }
     }
   },
 

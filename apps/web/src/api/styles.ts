@@ -13,8 +13,16 @@ import { client } from "./client";
  * the JSON body.
  */
 
+/** How long the list GET may hang before it counts as failed. The list is
+ * descriptor-free metadata plus small thumbnails, but projectStore awaits a
+ * refresh inside its open/duplicate cascades — without a deadline a hung
+ * backend would freeze those paths on this call. */
+const LIST_TIMEOUT_MS = 4000;
+
 export async function fetchStyles(): Promise<CustomStyleInfo[]> {
-  const res = await client.api.styles.$get();
+  const res = await client.api.styles.$get(undefined, {
+    init: { signal: AbortSignal.timeout(LIST_TIMEOUT_MS) },
+  });
   return (await res.json()) as CustomStyleInfo[];
 }
 

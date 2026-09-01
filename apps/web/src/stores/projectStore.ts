@@ -88,9 +88,22 @@ const RETRY_MS = 5000;
  * layer's pixels inline, so it gets far longer. */
 const LIST_TIMEOUT_MS = 4000;
 const DOC_TIMEOUT_MS = 15000;
-/** An autosave PUT carries every layer's pixels, so it gets the document
- * deadline rather than the list's. */
-const SAVE_TIMEOUT_MS = DOC_TIMEOUT_MS;
+/**
+ * An autosave PUT carries every layer's pixels, so its deadline scales with the
+ * payload instead of reusing the flat document deadline — a flat 15s aborts a
+ * legitimately slow save of a large project, and the retry then aborts the same
+ * way forever. The base covers the round-trip, the per-MiB allowance covers the
+ * server hashing and writing the assets, and the cap keeps a genuinely hung
+ * backend detectable in bounded time even for a huge document.
+ */
+const SAVE_TIMEOUT_BASE_MS = DOC_TIMEOUT_MS;
+const SAVE_TIMEOUT_PER_MIB_MS = 1000;
+const SAVE_TIMEOUT_MAX_MS = 120_000;
+
+function saveTimeout(bytes: number): number {
+  const scaled = SAVE_TIMEOUT_BASE_MS + (bytes / (1024 * 1024)) * SAVE_TIMEOUT_PER_MIB_MS;
+  return Math.min(SAVE_TIMEOUT_MAX_MS, Math.ceil(scaled));
+}
 
 /**
  * A request, with a deadline. Every fetch this store makes needs one, because a
@@ -255,10 +268,12 @@ async function flush() {
   useProject.setState({ status: "saving" });
   try {
     doc.thumbnail = await renderThumbnail(doc.layers);
-    const res = await fetchWithDeadline(`/api/projects/${id}`, SAVE_TIMEOUT_MS, {
+    // The body is ASCII (base64 pixels in JSON), so .length ≈ bytes on the wire.
+    const body = JSON.stringify(doc);
+    const res = await fetchWithDeadline(`/api/projects/${id}`, saveTimeout(body.length), {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(doc),
+      body,
     });
     if (!res.ok) throw new Error(`save failed (${res.status})`);
     // Only claim "saved" if we're still on the project we saved — otherwise the
@@ -479,7 +494,7 @@ export function retryConnection(): void {
 /** Refresh the switcher's list. Failures leave the previous list in place. */
 export async function fetchProjects(): Promise<ProjectSummary[]> {
   try {
-    const res = await fetch("/api/projects");
+    const res = await fetchWithDeadline("/api/projects", LIST_TIMEOUT_MS);
     if (!res.ok) return useProject.getState().projects;
     const list = (await res.json()) as ProjectSummary[];
     useProject.setState({ projects: list });
@@ -509,7 +524,7 @@ async function openProject(id: string, opts: { saveOutgoing: boolean }): Promise
   try {
     if (opts.saveOutgoing) await saveNow();
 
-    const res = await fetch(`/api/projects/${id}`);
+    const res = await fetchWithDeadline(`/api/projects/${id}`, DOC_TIMEOUT_MS);
     if (!res.ok) throw new Error(`could not open project (${res.status})`);
     const doc = (await res.json()) as ProjectDoc | null;
     if (!doc) throw new Error("project not found");
@@ -631,9 +646,11 @@ export async function importProject(name: string, layers: Partial<Layer>[]): Pro
   if (box) useViewport.getState().fitTo(box);
 }
 
-/** Rename a project. Renaming the open one updates the topbar in place. */
+/** Rename a project. Renaming the open one updates the topbar in place. The
+ * response is the full document, pixels included, so it gets the document
+ * deadline rather than the list's. */
 export async function renameProject(id: string, name: string): Promise<void> {
-  const res = await fetch(`/api/projects/${id}`, {
+  const res = await fetchWithDeadline(`/api/projects/${id}`, DOC_TIMEOUT_MS, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name }),
@@ -654,7 +671,7 @@ export async function duplicateProject(id: string): Promise<void> {
   if (!canLeaveProject()) return;
   // Copy the latest state, not the last autosave.
   if (id === useProject.getState().id) await saveNow();
-  const res = await fetch(`/api/projects/${id}/duplicate`, {
+  const res = await fetchWithDeadline(`/api/projects/${id}/duplicate`, DOC_TIMEOUT_MS, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({}),
@@ -672,11 +689,18 @@ export async function duplicateProject(id: string): Promise<void> {
 /**
  * Delete a project. Deleting the open one moves to the next most recent, or to
  * a fresh project when it was the last — the studio always has a document.
+ *
+ * Residual the deadline makes reachable: a DELETE that times out client-side
+ * but succeeded server-side throws before the pending-save cleanup below, so
+ * autosave can PUT the deleted project back and recreate the directory — the
+ * same recoverable class as a non-ok DELETE.
  */
 export async function deleteProject(id: string): Promise<void> {
   if (!canLeaveProject()) return;
   const wasOpen = useProject.getState().id === id;
-  const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
+  const res = await fetchWithDeadline(`/api/projects/${id}`, DOC_TIMEOUT_MS, {
+    method: "DELETE",
+  });
   if (!res.ok) throw new Error("could not delete the project");
   // The server cascade dropped the styles scoped to the deleted project; keep
   // the client library honest. Best-effort — every picker filters them out
