@@ -13,8 +13,19 @@ import { client } from "./client";
  * the JSON body.
  */
 
+/** How long the list GET may hang before it counts as failed. The list is
+ * descriptor-free metadata plus small thumbnails, but projectStore awaits a
+ * refresh inside its open/duplicate cascades — without a deadline a hung
+ * backend would freeze those paths on this call. */
+const LIST_TIMEOUT_MS = 4000;
+
 export async function fetchStyles(): Promise<CustomStyleInfo[]> {
-  const res = await client.api.styles.$get();
+  const res = await client.api.styles.$get(undefined, {
+    init: { signal: AbortSignal.timeout(LIST_TIMEOUT_MS) },
+  });
+  // Without this, a non-ok body would only fail by accident of not parsing —
+  // the caller's retry loop needs an honest rejection.
+  if (!res.ok) throw new Error(`could not list styles (${res.status})`);
   return (await res.json()) as CustomStyleInfo[];
 }
 
@@ -60,5 +71,8 @@ export async function updateStyle(
 }
 
 export async function deleteStyle(id: string): Promise<void> {
-  await fetch(`/api/styles/${encodeURIComponent(id)}`, { method: "DELETE" });
+  const res = await fetch(`/api/styles/${encodeURIComponent(id)}`, { method: "DELETE" });
+  // A swallowed failure would let the store prune the entry locally (and bump
+  // its mutation seq) for a style the server still has.
+  if (!res.ok) await throwApiError(res, "Couldn't delete the style.");
 }
