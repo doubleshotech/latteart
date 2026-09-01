@@ -48,7 +48,9 @@ import {
   getStyleDetail,
   listStyles,
   nextStyleLabel,
+  readStyleRef,
   resolveCustomStyle,
+  storeStyleAssets,
   updateStyle,
   type UpdateStylePatch,
 } from "./styles/index.ts";
@@ -537,12 +539,67 @@ const routes = app
     return c.json(detail);
   })
 
-  // Rename a custom style, edit its descriptor and/or change its scope.
-  // Omitted fields keep their value; a provided-but-empty label or prompt is
-  // rejected rather than silently replaced (create derives a default label,
-  // update must not); `projectId` is three-way (omitted keeps, null → global,
-  // id → scoped); and a body with no recognized field at all — malformed JSON
-  // included — is a 400, not a 200 that quietly rewrites the manifest.
+  // Serve one reference image of a custom style as raw bytes — the edit
+  // dialog's preview. Sending pixels rather than base64 keeps the detail
+  // payload small, and the name is content-hashed, so the response is
+  // immutable and cacheable forever.
+  .get("/api/styles/:id/refs/:file", (c) => {
+    const read = readStyleRef(c.req.param("id"), c.req.param("file"));
+    if (!read) return c.json({ error: "no such reference image" }, 404);
+    // Copied out of the Buffer, not handed over: a small file lands in Node's
+    // shared pool, whose ArrayBuffer holds unrelated bytes.
+    return c.body(new Uint8Array(read.bytes), 200, {
+      "content-type": read.mime,
+      "cache-control": "private, max-age=31536000, immutable",
+    });
+  })
+
+  // Re-distill a style's descriptor from the reference images it already has —
+  // after the images change, or to upgrade a style the offline heuristic wrote
+  // once a vision model is installed. The pixels come off disk, so the client
+  // sends none. Deliberately vision-only: falling back to the heuristic here
+  // would quietly DOWNGRADE a vision descriptor, which is the opposite of what
+  // the button promises.
+  .post("/api/styles/:id/describe", async (c) => {
+    const id = c.req.param("id");
+    const style = resolveCustomStyle(id, true);
+    if (!style) return c.json({ error: "no such style" }, 404);
+    if (style.refs.length === 0)
+      return c.json({ error: "this style has no reference images to read" }, 409);
+
+    const ctxFor = (llmId: string): LLMContext => ({ baseUrl: getSecretValue(llmId) });
+    const llm = await resolveLLMProvider(undefined, ctxFor);
+    if (!llm.describeStyle)
+      return c.json({ error: `${llm.label} can't read images — install a vision model` }, 409);
+
+    let descriptor: { prompt: string; negativePrompt?: string };
+    try {
+      descriptor = await llm.describeStyle(style.refs, ctxFor(llm.id), c.req.raw.signal);
+    } catch (err) {
+      const message = (err as Error)?.message ?? "could not describe the images";
+      return c.json({ error: message }, 502);
+    }
+
+    // The old negatives belong to the old description, so they are replaced
+    // too — "" clears them when the new descriptor carries none.
+    const info = updateStyle(id, {
+      prompt: descriptor.prompt,
+      negativePrompt: descriptor.negativePrompt ?? "",
+      source: "vision",
+    });
+    if (!info) return c.json({ error: "no such style" }, 404);
+    const detail = getStyleDetail(id);
+    if (!detail) return c.json({ error: "no such style" }, 404);
+    return c.json(detail);
+  })
+
+  // Rename a custom style, edit its descriptor, change its scope and/or replace
+  // its reference images. Omitted fields keep their value; a provided-but-empty
+  // label or prompt is rejected rather than silently replaced (create derives a
+  // default label, update must not); `projectId` is three-way (omitted keeps,
+  // null → global, id → scoped); and a body with no recognized field at all —
+  // malformed JSON included — is a 400, not a 200 that quietly rewrites the
+  // manifest.
   .patch("/api/styles/:id", async (c) => {
     if (!getStyleDetail(c.req.param("id"))) return c.json({ error: "no such style" }, 404);
     const body = await c.req
@@ -570,6 +627,30 @@ const routes = app
         patch.projectId = scope;
       }
     }
+
+    // Pixels last, and with no `await` between storing them and the manifest
+    // write below: the new asset files exist before the manifest names them,
+    // so an interleaved write from another handler would prune them.
+    const pixels: { refs?: string[]; thumbnail?: string } = {};
+    if (body.refs !== undefined) {
+      if (!Array.isArray(body.refs) || body.refs.some((r) => typeof r !== "string"))
+        return c.json({ error: "invalid reference images" }, 400);
+      if (body.refs.length === 0)
+        return c.json({ error: "at least one reference image is required" }, 400);
+      pixels.refs = body.refs;
+    }
+    if (body.thumbnail !== undefined) {
+      if (typeof body.thumbnail !== "string") return c.json({ error: "invalid thumbnail" }, 400);
+      pixels.thumbnail = body.thumbnail;
+    }
+    if (pixels.refs || pixels.thumbnail) {
+      const stored = storeStyleAssets(c.req.param("id"), pixels);
+      // Null = an entry named no reference this style has and held no image we
+      // could store. Dropping it silently would lose a reference the user chose.
+      if (!stored) return c.json({ error: "invalid reference images" }, 400);
+      Object.assign(patch, stored);
+    }
+
     if (Object.keys(patch).length === 0) return c.json({ error: "nothing to update" }, 400);
     const info = updateStyle(c.req.param("id"), patch);
     if (!info) return c.json({ error: "no such style" }, 404);

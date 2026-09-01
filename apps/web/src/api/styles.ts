@@ -70,6 +70,25 @@ export async function updateStyle(
   return (await res.json()) as CustomStyleInfo;
 }
 
+/**
+ * URL of one of a style's reference images. `ref` is an opaque token from
+ * {@link CustomStyleDetail.refs}; the server checks it belongs to that style.
+ * An `<img src>` streams the bytes, so a full-size reference never reaches the
+ * client as base64 — and the name is content-hashed, so the browser caches it.
+ */
+export function styleRefUrl(id: string, ref: string): string {
+  const file = ref.replace(/^asset:/, "");
+  return `/api/styles/${encodeURIComponent(id)}/refs/${encodeURIComponent(file)}`;
+}
+
+/** Re-distill the descriptor from the style's own reference images (vision
+ * models only — the server refuses rather than downgrade to the heuristic). */
+export async function describeStyle(id: string): Promise<CustomStyleDetail> {
+  const res = await fetch(`/api/styles/${encodeURIComponent(id)}/describe`, { method: "POST" });
+  if (!res.ok) await throwApiError(res, "Couldn't read the reference images.");
+  return (await res.json()) as CustomStyleDetail;
+}
+
 export async function deleteStyle(id: string): Promise<void> {
   const res = await fetch(`/api/styles/${encodeURIComponent(id)}`, { method: "DELETE" });
   // A swallowed failure would let the store prune the entry locally (and bump

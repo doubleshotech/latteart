@@ -1,6 +1,6 @@
 import { create } from "zustand";
-import type { CustomStyleInfo, UpdateStyleApiRequest } from "@latteart/shared";
-import { createStyle, deleteStyle, fetchStyles, updateStyle } from "../api/styles";
+import type { CustomStyleDetail, CustomStyleInfo, UpdateStyleApiRequest } from "@latteart/shared";
+import { createStyle, deleteStyle, describeStyle, fetchStyles, updateStyle } from "../api/styles";
 import { extractPaletteHint, makeThumbnail } from "../lib/palette";
 
 /**
@@ -39,6 +39,11 @@ interface StylesState {
   /** Rename and/or edit a style's descriptor; replaces the entry in place.
    * Throws with a user-facing message. */
   update: (id: string, patch: UpdateStyleApiRequest) => Promise<CustomStyleInfo>;
+  /** Re-distill the descriptor from the style's own reference images. Returns
+   * the fresh detail so the dialog can refill its text fields; the list entry
+   * is replaced too, since `source` flips to "vision". Throws with a
+   * user-facing message. */
+  describe: (id: string) => Promise<CustomStyleDetail>;
   /** Delete a style. Throws with a user-facing message. */
   remove: (id: string) => Promise<void>;
 }
@@ -111,6 +116,23 @@ export const useStyles = create<StylesState>((set, get) => ({
     mutationSeq++;
     set((s) => ({ customStyles: s.customStyles.map((x) => (x.id === id ? info : x)) }));
     return info;
+  },
+
+  describe: async (id) => {
+    const detail = await describeStyle(id);
+    mutationSeq++;
+    // The detail carries the info fields, so the list entry is rebuilt from it
+    // rather than refetched — `source` and the descriptor changed together.
+    const info: CustomStyleInfo = {
+      id: detail.id,
+      label: detail.label,
+      thumbnail: detail.thumbnail,
+      source: detail.source,
+      projectId: detail.projectId,
+      createdAt: detail.createdAt,
+    };
+    set((s) => ({ customStyles: s.customStyles.map((x) => (x.id === id ? info : x)) }));
+    return detail;
   },
 
   remove: async (id) => {

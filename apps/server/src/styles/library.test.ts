@@ -81,6 +81,98 @@ describe("custom-style library on disk", () => {
     assert.equal(lib.getStyleDetail(created.id)?.prompt, "pastel dawn");
   });
 
+  it("getStyleDetail exposes the reference tokens, and readStyleRef serves their bytes", () => {
+    const detail = lib.getStyleDetail(created.id);
+    assert.equal(detail?.refs.length, 2);
+    // Tokens, not pixels: a full-size reference must never ride in the payload.
+    assert.ok(detail?.refs.every((r) => /^asset:[a-f0-9]{64}\.png$/.test(r)));
+    const file = detail!.refs[0]!.slice("asset:".length);
+    const read = lib.readStyleRef(created.id, file);
+    assert.equal(read?.mime, "image/png");
+    assert.equal(read?.bytes.toString("utf8"), "png-bytes-ref-1");
+  });
+
+  it("readStyleRef refuses a file this style doesn't reference", () => {
+    const other = lib.createStyle({
+      label: "Other",
+      prompt: "other",
+      source: "heuristic",
+      images: [dataUrl("ref-other")],
+    });
+    const theirs = lib.getStyleDetail(other.id)!.refs[0]!.slice("asset:".length);
+    // The file exists and is readable for its OWN style — the scoping is what
+    // makes this 404, so one style can't read another's assets by name.
+    assert.ok(lib.readStyleRef(other.id, theirs));
+    assert.equal(lib.readStyleRef(created.id, theirs), undefined);
+    // Nor can a name walk out of the assets directory.
+    assert.equal(lib.readStyleRef(created.id, "../styles.json"), undefined);
+    lib.deleteStyle(other.id);
+  });
+
+  it("storeStyleAssets keeps known refs, writes new images, and collapses duplicates", () => {
+    const before = lib.getStyleDetail(created.id)!.refs;
+    const stored = lib.storeStyleAssets(created.id, {
+      // keep the second, add one, and repeat both — a repeat content-hashes to
+      // one file, so the manifest must not list it twice.
+      refs: [before[1]!, dataUrl("ref-3"), before[1]!, dataUrl("ref-3")],
+    });
+    assert.equal(stored?.refs?.length, 2);
+    assert.equal(stored?.refs?.[0], before[1]);
+    assert.notEqual(stored?.refs?.[1], before[0]);
+  });
+
+  it("storeStyleAssets returns null for an entry it can resolve to nothing", () => {
+    const before = lib.getStyleDetail(created.id)!.refs;
+    // A token this style doesn't have (it's another style's, or was already
+    // removed), a bare string, and an undecodable data: URL all fail rather
+    // than drop silently — the route turns null into a 400.
+    assert.equal(lib.storeStyleAssets(created.id, { refs: [`asset:${"a".repeat(64)}.png`] }), null);
+    assert.equal(lib.storeStyleAssets(created.id, { refs: [...before, "hello"] }), null);
+    assert.equal(
+      lib.storeStyleAssets(created.id, { thumbnail: "data:text/plain;base64,aGk=" }),
+      null,
+    );
+    assert.equal(lib.storeStyleAssets("custom:missing", { refs: [] }), null);
+  });
+
+  it("a reference edit replaces the images and prunes only the dropped one", () => {
+    const before = lib.getStyleDetail(created.id)!.refs;
+    const stored = lib.storeStyleAssets(created.id, {
+      refs: [before[1]!, dataUrl("ref-3")],
+      thumbnail: dataUrl("thumb-2"),
+    })!;
+    const info = lib.updateStyle(created.id, { refs: stored.refs, thumbnail: stored.thumbnail });
+    const after = lib.getStyleDetail(created.id)!;
+    assert.deepEqual(after.refs, stored.refs);
+    // The kept ref still resolves to pixels, so the prune spared its file.
+    assert.equal(lib.resolveCustomStyle(created.id, true)?.refs.length, 2);
+    assert.ok(info?.thumbnail?.startsWith("data:image/png;base64,"));
+    // ref-1 and the old thumbnail are unreferenced now; ref-2, ref-3 and the
+    // new thumbnail remain.
+    assert.equal(readdirSync(ASSETS_DIR).length, 3);
+  });
+
+  it("a later edit that omits refs and thumbnail leaves both untouched", () => {
+    const before = lib.getStyleDetail(created.id)!;
+    lib.updateStyle(created.id, { label: "Rain city" });
+    const after = lib.getStyleDetail(created.id)!;
+    assert.deepEqual(after.refs, before.refs);
+    assert.equal(after.thumbnail, before.thumbnail);
+    assert.equal(readdirSync(ASSETS_DIR).length, 3);
+  });
+
+  it("a re-describe replaces the descriptor and records the vision source", () => {
+    lib.updateStyle(created.id, {
+      prompt: "hand-inked, halftone dots",
+      negativePrompt: "",
+      source: "vision",
+    });
+    const detail = lib.getStyleDetail(created.id);
+    assert.equal(detail?.prompt, "hand-inked, halftone dots");
+    assert.equal(detail?.negativePrompt, undefined);
+    assert.equal(detail?.source, "vision");
+  });
+
   it("deleteStyle prunes the now-unreferenced assets", () => {
     lib.deleteStyle(created.id);
     assert.equal(lib.listStyles().length, 0);
