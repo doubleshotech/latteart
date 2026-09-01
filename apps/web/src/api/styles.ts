@@ -71,5 +71,8 @@ export async function updateStyle(
 }
 
 export async function deleteStyle(id: string): Promise<void> {
-  await fetch(`/api/styles/${encodeURIComponent(id)}`, { method: "DELETE" });
+  const res = await fetch(`/api/styles/${encodeURIComponent(id)}`, { method: "DELETE" });
+  // A swallowed failure would let the store prune the entry locally (and bump
+  // its mutation seq) for a style the server still has.
+  if (!res.ok) await throwApiError(res, "Couldn't delete the style.");
 }

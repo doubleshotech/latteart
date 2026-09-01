@@ -440,7 +440,9 @@ export function PromptBar() {
   const deleteStyle = (id: string) => {
     // Drop the selection back to None if the style in use is the one removed.
     if (styleId === id) setStyle("none");
-    void removeStyle(id);
+    removeStyle(id).catch((err: unknown) => {
+      setError(err instanceof Error ? err.message : "Couldn't delete the style.");
+    });
   };
 
   // The bar never locks while a job runs — submitting mid-run queues the job.

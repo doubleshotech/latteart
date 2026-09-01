@@ -39,6 +39,7 @@ interface StylesState {
   /** Rename and/or edit a style's descriptor; replaces the entry in place.
    * Throws with a user-facing message. */
   update: (id: string, patch: UpdateStyleApiRequest) => Promise<CustomStyleInfo>;
+  /** Delete a style. Throws with a user-facing message. */
   remove: (id: string) => Promise<void>;
 }
 
@@ -52,8 +53,9 @@ let retryTimer: number | null = null;
  * request predates the bump resolves against a list that no longer reflects
  * the library; replacing the list with it would drop the mutation — and for a
  * create whose style is selected, PromptBar's fallback would read the vanished
- * entry as deleted and persist a reset to "none". Stale successes are
- * discarded; a later refresh reconciles against server truth. */
+ * entry as deleted and persist a reset to "none". A stale success is discarded
+ * and the refresh re-runs itself, so callers that await it still settle only
+ * fresh-or-failed and the retry loop can't die on the discard path. */
 let mutationSeq = 0;
 
 export const useStyles = create<StylesState>((set, get) => ({
@@ -65,7 +67,11 @@ export const useStyles = create<StylesState>((set, get) => ({
     const seq = mutationSeq;
     try {
       const list = await fetchStyles();
-      if (seq !== mutationSeq) return; // stale — a mutation landed mid-flight
+      // Stale — a mutation landed mid-flight. Re-run against the new seq
+      // rather than bare-return: this settle path must still end fresh (set
+      // below) or failed (catch), or an awaited guard refresh reads the old
+      // list as current and a pending retry timer is never re-armed.
+      if (seq !== mutationSeq) return get().refresh();
       // Any successful refresh — the online transition, a cascade's guard, this
       // loop itself — makes a pending retry redundant; cancelling it here is
       // deliberate, not a race.
