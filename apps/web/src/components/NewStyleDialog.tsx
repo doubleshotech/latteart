@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Sparkles, X } from "lucide-react";
 import type { CustomStyleInfo } from "@latteart/shared";
@@ -59,7 +59,6 @@ export function NewStyleDialog({
   const [scopeToProject, setScopeToProject] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const nextId = useRef(0);
 
   const reset = () => {
     setRefs([]);
@@ -155,14 +154,7 @@ export function NewStyleDialog({
               disabled={busy}
               onAdd={(added) => {
                 setError(null);
-                setRefs((prev) => [
-                  ...prev,
-                  ...added.map((a) => ({
-                    key: `new-${nextId.current++}`,
-                    url: a.dataUrl,
-                    name: a.name,
-                  })),
-                ]);
+                setRefs((prev) => [...prev, ...added]);
               }}
               onRemove={(key) => setRefs((prev) => prev.filter((x) => x.key !== key))}
             />

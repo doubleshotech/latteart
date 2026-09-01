@@ -106,18 +106,16 @@ export function getStyleDetail(id: string): CustomStyleDetail | undefined {
 
 /**
  * Read one of a style's reference images as raw bytes — the read side of the
- * refs route. `file` is the `<hash>.<ext>` name from a ref token; it is checked
- * against THIS style's refs, so a request can neither reach another style's
- * assets nor walk out of the directory. Undefined when the style, the ref, or
- * the file is missing.
+ * refs route. `ref` is a whole token exactly as {@link getStyleDetail} handed it
+ * out, and it is matched by EQUALITY against this style's own refs: the ref
+ * format stays server-side (no client parses it), and nothing but a token this
+ * style already holds can name a file, so a request can neither reach another
+ * style's assets nor walk out of the directory. Undefined when the style, the
+ * ref, or the file is missing.
  */
-export function readStyleRef(
-  id: string,
-  file: string,
-): { bytes: Buffer; mime: string } | undefined {
+export function readStyleRef(id: string, ref: string): { bytes: Buffer; mime: string } | undefined {
   const s = findStyle(id);
-  const ref = s?.refs.find((r) => assetRefFile(r) === file);
-  if (!ref) return undefined;
+  if (!s?.refs.includes(ref)) return undefined;
   return readAssetBytes(ASSETS_DIR, ref);
 }
 
@@ -208,6 +206,19 @@ export interface UpdateStylePatch {
   thumbnail?: string;
 }
 
+/** The pixel-carrying half of a style update, on either side of
+ * {@link storeStyleAssets}: data: URLs and kept tokens going in, storage refs
+ * coming out. Both halves travel together, so they are one type. */
+export interface StyleAssets {
+  refs?: string[];
+  thumbnail?: string;
+}
+
+/** What {@link storeStyleAssets} could not resolve, so the route can say which:
+ * the style is gone, a reference entry named nothing, or the thumbnail was not
+ * a storable image. */
+export type StyleAssetFault = "no-such-style" | "refs" | "thumbnail";
+
 /**
  * Store the pixels an update carries, and return them as storage refs for
  * {@link updateStyle}'s patch. `refs` is the complete new list, each entry
@@ -216,9 +227,10 @@ export interface UpdateStylePatch {
  * two copies of one image content-hash to a single file, and the manifest must
  * not list it twice.
  *
- * Null means an entry resolved to nothing — a token belonging to no ref of this
- * style, or an image the asset store could not decode. The caller turns that
- * into a 400 rather than silently dropping a reference the user chose.
+ * A `fault` means an entry resolved to nothing — a token belonging to no ref of
+ * this style, or an image the asset store could not decode. The caller turns it
+ * into a 400 rather than silently dropping a reference the user chose, and the
+ * three causes stay apart so the message names the right one.
  *
  * The new asset files exist before the manifest names them, so the caller must
  * reach `updateStyle` in the SAME synchronous stretch: any `writeManifest` in
@@ -227,31 +239,31 @@ export interface UpdateStylePatch {
  */
 export function storeStyleAssets(
   id: string,
-  input: { refs?: string[]; thumbnail?: string },
-): { refs?: string[]; thumbnail?: string } | null {
+  input: StyleAssets,
+): { stored: StyleAssets; fault?: undefined } | { stored?: undefined; fault: StyleAssetFault } {
   const s = findStyle(id);
-  if (!s) return null;
+  if (!s) return { fault: "no-such-style" };
   mkdirSync(ASSETS_DIR, { recursive: true, mode: 0o700 });
-  const out: { refs?: string[]; thumbnail?: string } = {};
+  const stored: StyleAssets = {};
 
   if (input.refs !== undefined) {
     const current = new Set(s.refs);
     const refs: string[] = [];
     for (const entry of input.refs) {
       const ref = current.has(entry) ? entry : writeAsset(ASSETS_DIR, entry);
-      if (!ref) return null;
+      if (!ref) return { fault: "refs" };
       if (!refs.includes(ref)) refs.push(ref);
     }
-    out.refs = refs;
+    stored.refs = refs;
   }
 
   if (input.thumbnail !== undefined) {
     const ref = writeAsset(ASSETS_DIR, input.thumbnail);
-    if (!ref) return null;
-    out.thumbnail = ref;
+    if (!ref) return { fault: "thumbnail" };
+    stored.thumbnail = ref;
   }
 
-  return out;
+  return { stored };
 }
 
 /**

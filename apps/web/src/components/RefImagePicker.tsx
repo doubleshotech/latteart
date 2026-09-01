@@ -15,17 +15,11 @@ export interface RefImageItem {
   name: string;
 }
 
-/** A file the user added, ready to become a {@link RefImageItem}. */
-export interface AddedRefImage {
-  name: string;
-  dataUrl: string;
-}
-
 /**
  * Drop zone plus thumbnail grid for a custom style's reference images. Shared by
  * the create and edit dialogs so the two lists look and behave the same; the
  * caller owns the list itself (create sends the data URLs, edit sends a mix of
- * kept refs and new ones).
+ * kept refs and new ones) and appends whatever `onAdd` hands it.
  */
 export function RefImagePicker({
   items,
@@ -35,20 +29,28 @@ export function RefImagePicker({
   hint = "1–5 references work best · PNG, JPG, WebP",
 }: {
   items: RefImageItem[];
-  onAdd: (added: AddedRefImage[]) => void;
+  onAdd: (added: RefImageItem[]) => void;
   onRemove: (key: string) => void;
   disabled?: boolean;
   hint?: string;
 }) {
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  // Keys for added files are minted here so both dialogs can't mint them
+  // differently. An added key is never an `asset:` ref, which is how the edit
+  // dialog tells a new image from a kept one.
+  const nextKey = useRef(0);
 
   const addFiles = async (files: FileList | File[]) => {
     const images = [...files].filter((f) => f.type.startsWith("image/"));
     if (images.length === 0) return;
     onAdd(
       await Promise.all(
-        images.map(async (f) => ({ name: f.name, dataUrl: await fileToDataUrl(f) })),
+        images.map(async (f) => ({
+          key: `added-${nextKey.current++}`,
+          url: await fileToDataUrl(f),
+          name: f.name,
+        })),
       ),
     );
   };

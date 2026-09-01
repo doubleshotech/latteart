@@ -7,9 +7,11 @@ import { extractPaletteHint, makeThumbnail } from "../lib/palette";
  * The user's custom style library — image-derived styles that compose into
  * generation prompts exactly like a built-in preset. Palette extraction and the
  * picker thumbnail are computed client-side (see ../lib/palette) and sent with
- * the create request — and with an update that changes the first reference
- * image; the descriptor itself is always distilled server-side, on create and
- * on {@link StylesState.describe}, which reads the stored images. The store
+ * the create request; an update sends a rebuilt thumbnail too when the first
+ * reference image changes, but never a palette hint — only creation falls back
+ * to the offline heuristic. The descriptor itself is always distilled
+ * server-side, on create and on {@link StylesState.describe}, which reads the
+ * images off disk rather than taking them from here. The store
  * holds the FULL library, project-scoped styles included — visibility filtering
  * is the picker's job (see visibleStyles), so a project switch needs no refetch.
  * The list can still go stale when the library changes outside this store —

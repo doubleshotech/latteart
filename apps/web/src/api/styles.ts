@@ -74,13 +74,14 @@ export async function updateStyle(
 
 /**
  * URL of one of a style's reference images. `ref` is an opaque token from
- * {@link CustomStyleDetail.refs}; the server checks it belongs to that style.
- * An `<img src>` streams the bytes, so a full-size reference never reaches the
- * client as base64 — and the name is content-hashed, so the browser caches it.
+ * {@link CustomStyleDetail.refs} and travels WHOLE — the ref format is the
+ * server's, and nothing here parses it; the server matches the token against
+ * that style's own refs. An `<img src>` streams the bytes, so a full-size
+ * reference never reaches the client as base64 — and the token is
+ * content-hashed, so the browser caches it.
  */
 export function styleRefUrl(id: string, ref: string): string {
-  const file = ref.replace(/^asset:/, "");
-  return `/api/styles/${encodeURIComponent(id)}/refs/${encodeURIComponent(file)}`;
+  return `/api/styles/${encodeURIComponent(id)}/refs/${encodeURIComponent(ref)}`;
 }
 
 /** Re-distill the descriptor from the style's own reference images (vision

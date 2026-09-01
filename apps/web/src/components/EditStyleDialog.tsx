@@ -94,7 +94,11 @@ export function EditStyleDialog({
   const [busy, setBusy] = useState(false);
   const [describing, setDescribing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const nextId = useRef(0);
+  // The style the fields currently belong to. Every await that ends in setState
+  // checks it: the dialog closes on Escape or a click outside even mid-request,
+  // and a response landing after the user opened ANOTHER style would fill that
+  // style's fields with this one's text — which Save would then persist.
+  const openId = useRef<string | null>(null);
 
   // Prefill from the server whenever a style is opened. Every field is cleared
   // first, the reference list included — the component stays mounted across
@@ -103,6 +107,7 @@ export function EditStyleDialog({
   // fetch leaves Save disabled). The cancelled flag keeps a stale response from
   // filling a dialog that moved on to another id.
   useEffect(() => {
+    openId.current = styleId;
     if (!styleId) return;
     let cancelled = false;
     setLabel("");
@@ -148,12 +153,35 @@ export function EditStyleDialog({
   const canSave =
     !loading && !busyAtAll && label.trim() !== "" && prompt.trim() !== "" && refs.length > 0;
 
+  /**
+   * The pixel half of a patch: the complete list, each kept image as its storage
+   * token and each added one as its data: URL, plus a thumbnail rebuilt from the
+   * first image when that image changed. Empty when nothing about the images
+   * changed, so a rename never re-encodes a preview.
+   */
+  const refsPatch = async (): Promise<UpdateStyleApiRequest> => {
+    if (!refsChanged) return {};
+    const kept = new Set(savedRefs);
+    const patch: UpdateStyleApiRequest = {
+      refs: refs.map((r) => (kept.has(r.key) ? r.key : r.url)),
+    };
+    // The thumbnail follows the first image. Omitted when it can't be decoded —
+    // a missing preview must not replace a good one, so the picker can briefly
+    // show an image the style no longer references.
+    if (refs[0]?.key !== savedRefs[0]) {
+      const thumbnail = await makeThumbnail(refs[0]!.url);
+      if (thumbnail) patch.thumbnail = thumbnail;
+    }
+    return patch;
+  };
+
   const save = async () => {
     if (!styleId || !canSave) return;
+    const id = styleId;
     setBusy(true);
     setError(null);
     try {
-      const patch: UpdateStyleApiRequest = {
+      await update(id, {
         label: label.trim(),
         prompt: prompt.trim(),
         negativePrompt: negativePrompt.trim(),
@@ -161,40 +189,48 @@ export function EditStyleDialog({
         // global (null). Guarded on a known project id so a not-yet-hydrated
         // boot can never silently re-scope a style.
         ...(projectId ? { projectId: scopeToProject ? projectId : null } : {}),
-      };
-      if (refsChanged) {
-        // A kept image travels as its storage token, an added one as its data:
-        // URL — the server resolves both against this style's current refs.
-        const kept = new Set(savedRefs);
-        patch.refs = refs.map((r) => (kept.has(r.key) ? r.key : r.url));
-        // The thumbnail follows the first image. Only rebuilt when that image
-        // changed, and omitted when it can't be decoded — a missing preview
-        // must not replace a good one.
-        if (refs[0]?.key !== savedRefs[0]) {
-          const thumbnail = await makeThumbnail(refs[0]!.url);
-          if (thumbnail) patch.thumbnail = thumbnail;
-        }
-      }
-      await update(styleId, patch);
-      onOpenChange(false);
+        ...(await refsPatch()),
+      });
+      if (openId.current === id) onOpenChange(false);
     } catch (err) {
-      setError((err as Error).message || "Couldn't save the style.");
+      if (openId.current === id) setError((err as Error).message || "Couldn't save the style.");
     } finally {
       setBusy(false);
     }
   };
 
-  /** Re-distill the descriptor from the images the server has on disk. */
+  /**
+   * Re-distill the descriptor from the reference images. The server reads them
+   * off disk, so pending image edits are saved first — otherwise the button
+   * would describe images the dialog no longer shows. That save is why this one
+   * action writes before Save does; the text it produces then stages like any
+   * other field.
+   */
   const redescribe = async () => {
-    if (!styleId || loading || busyAtAll || refsChanged) return;
+    if (!styleId || loading || busyAtAll || refs.length === 0) return;
+    const id = styleId;
     setDescribing(true);
     setError(null);
     try {
-      const detail = await describe(styleId);
+      const pending = await refsPatch();
+      if (pending.refs) await update(id, pending);
+      const detail = await describe(id);
+      if (openId.current !== id) return;
       setPrompt(detail.prompt);
       setNegativePrompt(detail.negativePrompt ?? "");
+      // Resync to what the server now holds, so the saved images stop reading as
+      // pending changes and a later Save doesn't re-send them.
+      setSavedRefs(detail.refs);
+      setRefs(
+        detail.refs.map((ref, i) => ({
+          key: ref,
+          url: styleRefUrl(id, ref),
+          name: `Reference ${i + 1}`,
+        })),
+      );
     } catch (err) {
-      setError((err as Error).message || "Couldn't read the reference images.");
+      if (openId.current === id)
+        setError((err as Error).message || "Couldn't read the reference images.");
     } finally {
       setDescribing(false);
     }
@@ -272,14 +308,7 @@ export function EditStyleDialog({
                 hint="The style keeps its name and where it applies · at least one image"
                 onAdd={(added) => {
                   setError(null);
-                  setRefs((prev) => [
-                    ...prev,
-                    ...added.map((a) => ({
-                      key: `new-${nextId.current++}`,
-                      url: a.dataUrl,
-                      name: a.name,
-                    })),
-                  ]);
+                  setRefs((prev) => [...prev, ...added]);
                 }}
                 onRemove={(key) => setRefs((prev) => prev.filter((x) => x.key !== key))}
               />
@@ -299,10 +328,10 @@ export function EditStyleDialog({
                 <button
                   type="button"
                   onClick={redescribe}
-                  disabled={loading || busyAtAll || refsChanged}
+                  disabled={loading || busyAtAll || refs.length === 0}
                   title={
                     refsChanged
-                      ? "Save the image changes first — this reads the stored images."
+                      ? "Saves your image changes, then writes the description again from them."
                       : "Write the description again from the reference images."
                   }
                   style={{
@@ -318,8 +347,8 @@ export function EditStyleDialog({
                     fontFamily: "inherit",
                     fontSize: 11,
                     fontWeight: 500,
-                    cursor: loading || busyAtAll || refsChanged ? "not-allowed" : "pointer",
-                    opacity: loading || busyAtAll || refsChanged ? 0.5 : 1,
+                    cursor: loading || busyAtAll || refs.length === 0 ? "not-allowed" : "pointer",
+                    opacity: loading || busyAtAll || refs.length === 0 ? 0.5 : 1,
                   }}
                 >
                   <Sparkles size={12} strokeWidth={1.9} />

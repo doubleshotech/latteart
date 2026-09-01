@@ -52,6 +52,7 @@ import {
   resolveCustomStyle,
   storeStyleAssets,
   updateStyle,
+  type StyleAssets,
   type UpdateStylePatch,
 } from "./styles/index.ts";
 import { heuristicDescriptor } from "./styles/heuristic.ts";
@@ -542,9 +543,10 @@ const routes = app
   // Serve one reference image of a custom style as raw bytes — the edit
   // dialog's preview. Sending pixels rather than base64 keeps the detail
   // payload small, and the name is content-hashed, so the response is
-  // immutable and cacheable forever.
-  .get("/api/styles/:id/refs/:file", (c) => {
-    const read = readStyleRef(c.req.param("id"), c.req.param("file"));
+  // immutable and cacheable forever. `:ref` is a whole token from the detail
+  // payload (percent-encoded), so the ref format never leaves this side.
+  .get("/api/styles/:id/refs/:ref", (c) => {
+    const read = readStyleRef(c.req.param("id"), c.req.param("ref"));
     if (!read) return c.json({ error: "no such reference image" }, 404);
     // Copied out of the Buffer, not handed over: a small file lands in Node's
     // shared pool, whose ArrayBuffer holds unrelated bytes.
@@ -631,7 +633,7 @@ const routes = app
     // Pixels last, and with no `await` between storing them and the manifest
     // write below: the new asset files exist before the manifest names them,
     // so an interleaved write from another handler would prune them.
-    const pixels: { refs?: string[]; thumbnail?: string } = {};
+    const pixels: StyleAssets = {};
     if (body.refs !== undefined) {
       if (!Array.isArray(body.refs) || body.refs.some((r) => typeof r !== "string"))
         return c.json({ error: "invalid reference images" }, 400);
@@ -644,10 +646,13 @@ const routes = app
       pixels.thumbnail = body.thumbnail;
     }
     if (pixels.refs || pixels.thumbnail) {
-      const stored = storeStyleAssets(c.req.param("id"), pixels);
-      // Null = an entry named no reference this style has and held no image we
-      // could store. Dropping it silently would lose a reference the user chose.
-      if (!stored) return c.json({ error: "invalid reference images" }, 400);
+      // A fault means an entry named no reference this style has and held no
+      // image we could store. Dropping it silently would lose a reference the
+      // user chose, and the three causes get three messages.
+      const { stored, fault } = storeStyleAssets(c.req.param("id"), pixels);
+      if (fault === "no-such-style") return c.json({ error: "no such style" }, 404);
+      if (fault === "thumbnail") return c.json({ error: "invalid thumbnail" }, 400);
+      if (fault) return c.json({ error: "invalid reference images" }, 400);
       Object.assign(patch, stored);
     }
 
