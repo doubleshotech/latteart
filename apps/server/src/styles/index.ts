@@ -16,7 +16,7 @@ import type {
   StyleFragment,
   StyleSource,
 } from "@latteart/shared";
-import { assetRefFile, readAsset, writeAsset } from "../assets.ts";
+import { assetRefFile, readAsset, readAssetBytes, writeAsset } from "../assets.ts";
 import { DATA_DIR } from "../paths.ts";
 
 /**
@@ -31,8 +31,10 @@ import { DATA_DIR } from "../paths.ts";
  *
  * The manifest stores `asset:<file>` refs (see ../assets) for the thumbnail and
  * each source reference image; base64 never touches the JSON. On read, only the
- * thumbnail is rehydrated to a data: URL (the picker needs it); source refs stay
- * as refs until a native-conditioning provider consumes them. Assets no longer
+ * thumbnail is rehydrated to a data: URL (the picker needs it): a source
+ * reference becomes pixels for a native-conditioning provider
+ * ({@link resolveCustomStyle}) or raw bytes for the edit dialog
+ * ({@link readStyleRef}), never base64 in a list payload. Assets no longer
  * referenced by any style are pruned after each write.
  */
 
@@ -96,7 +98,25 @@ export function listStyles(): CustomStyleInfo[] {
 export function getStyleDetail(id: string): CustomStyleDetail | undefined {
   const s = findStyle(id);
   if (!s) return undefined;
-  return { ...toInfo(s), prompt: s.prompt, negativePrompt: s.negativePrompt };
+  // `refs` are the storage tokens, not the pixels: the dialog renders them via
+  // readStyleRef and hands the survivors back on save, so editing the reference
+  // list never base64s a full-size image in either direction.
+  return { ...toInfo(s), prompt: s.prompt, negativePrompt: s.negativePrompt, refs: [...s.refs] };
+}
+
+/**
+ * Read one of a style's reference images as raw bytes — the read side of the
+ * refs route. `ref` is a whole token exactly as {@link getStyleDetail} handed it
+ * out, and it is matched by EQUALITY against this style's own refs: the ref
+ * format stays server-side (no client parses it), and nothing but a token this
+ * style already holds can name a file, so a request can neither reach another
+ * style's assets nor walk out of the directory. Undefined when the style, the
+ * ref, or the file is missing.
+ */
+export function readStyleRef(id: string, ref: string): { bytes: Buffer; mime: string } | undefined {
+  const s = findStyle(id);
+  if (!s?.refs.includes(ref)) return undefined;
+  return readAssetBytes(ASSETS_DIR, ref);
 }
 
 /** Look up a custom style record by id (one manifest read), or undefined. */
@@ -178,14 +198,81 @@ export interface UpdateStylePatch {
   negativePrompt?: string;
   /** `null` makes the style global; a project id scopes it; undefined keeps the scope. */
   projectId?: string | null;
+  /** How the descriptor was produced — set when a re-describe replaces it. */
+  source?: StyleSource;
+  /** The complete new reference list as STORAGE refs (see {@link storeStyleAssets}). */
+  refs?: string[];
+  /** Replacement thumbnail as a STORAGE ref (see {@link storeStyleAssets}). */
+  thumbnail?: string;
+}
+
+/** The pixel-carrying half of a style update, on either side of
+ * {@link storeStyleAssets}: data: URLs and kept tokens going in, storage refs
+ * coming out. Both halves travel together, so they are one type. */
+export interface StyleAssets {
+  refs?: string[];
+  thumbnail?: string;
+}
+
+/** What {@link storeStyleAssets} could not resolve, so the route can say which:
+ * the style is gone, a reference entry named nothing, or the thumbnail was not
+ * a storable image. */
+export type StyleAssetFault = "no-such-style" | "refs" | "thumbnail";
+
+/**
+ * Store the pixels an update carries, and return them as storage refs for
+ * {@link updateStyle}'s patch. `refs` is the complete new list, each entry
+ * either one of THIS style's current refs (kept as-is) or a data: URL (written
+ * as a new asset); `thumbnail` is a replacement preview. Duplicates collapse —
+ * two copies of one image content-hash to a single file, and the manifest must
+ * not list it twice.
+ *
+ * A `fault` means an entry resolved to nothing — a token belonging to no ref of
+ * this style, or an image the asset store could not decode. The caller turns it
+ * into a 400 rather than silently dropping a reference the user chose, and the
+ * three causes stay apart so the message names the right one.
+ *
+ * The new asset files exist before the manifest names them, so the caller must
+ * reach `updateStyle` in the SAME synchronous stretch: any `writeManifest` in
+ * between (another route handler, a cascade) prunes every file the manifest
+ * doesn't reference yet — including these.
+ */
+export function storeStyleAssets(
+  id: string,
+  input: StyleAssets,
+): { stored: StyleAssets; fault?: undefined } | { stored?: undefined; fault: StyleAssetFault } {
+  const s = findStyle(id);
+  if (!s) return { fault: "no-such-style" };
+  mkdirSync(ASSETS_DIR, { recursive: true, mode: 0o700 });
+  const stored: StyleAssets = {};
+
+  if (input.refs !== undefined) {
+    const current = new Set(s.refs);
+    const refs: string[] = [];
+    for (const entry of input.refs) {
+      const ref = current.has(entry) ? entry : writeAsset(ASSETS_DIR, entry);
+      if (!ref) return { fault: "refs" };
+      if (!refs.includes(ref)) refs.push(ref);
+    }
+    stored.refs = refs;
+  }
+
+  if (input.thumbnail !== undefined) {
+    const ref = writeAsset(ASSETS_DIR, input.thumbnail);
+    if (!ref) return { fault: "thumbnail" };
+    stored.thumbnail = ref;
+  }
+
+  return { stored };
 }
 
 /**
- * Rename a style, edit its descriptor text and/or change its scope; returns
- * the updated public info, or undefined for an unknown id. Mutates the found
- * record in place — `thumbnail` and `refs` must survive untouched, or the
- * post-write asset prune would silently delete the source images native
- * styleRef conditioning reads.
+ * Rename a style, edit its descriptor text, change its scope and/or replace its
+ * reference images; returns the updated public info, or undefined for an
+ * unknown id. Mutates the found record in place — an OMITTED `thumbnail` or
+ * `refs` must survive untouched, or the post-write asset prune would silently
+ * delete the source images native styleRef conditioning reads. When they are
+ * provided, that same prune is what collects the images the user dropped.
  */
 export function updateStyle(id: string, patch: UpdateStylePatch): CustomStyleInfo | undefined {
   const styles = readManifest();
@@ -195,6 +282,9 @@ export function updateStyle(id: string, patch: UpdateStylePatch): CustomStyleInf
   if (patch.prompt !== undefined) s.prompt = patch.prompt;
   if (patch.negativePrompt !== undefined) s.negativePrompt = patch.negativePrompt || undefined;
   if (patch.projectId !== undefined) s.projectId = patch.projectId ?? undefined;
+  if (patch.source !== undefined) s.source = patch.source;
+  if (patch.refs !== undefined) s.refs = patch.refs;
+  if (patch.thumbnail !== undefined) s.thumbnail = patch.thumbnail;
   writeManifest(styles);
   return toInfo(s);
 }

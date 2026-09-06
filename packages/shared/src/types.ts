@@ -369,6 +369,14 @@ export interface CustomStyleInfo {
 export interface CustomStyleDetail extends CustomStyleInfo {
   prompt: string;
   negativePrompt?: string;
+  /**
+   * Opaque storage refs for the reference images, in order. These are names,
+   * not pixels: the dialog displays each one through `GET
+   * /api/styles/:id/refs/:file` and sends the ones it keeps straight back in
+   * {@link UpdateStyleApiRequest.refs}, so a full-size reference never round-
+   * trips through base64 to edit a style.
+   */
+  refs: string[];
 }
 
 /**
@@ -414,4 +422,15 @@ export interface UpdateStyleApiRequest {
   prompt?: string;
   negativePrompt?: string;
   projectId?: string | null;
+  /**
+   * The complete new reference-image list, in order. Each entry is either one
+   * of the style's current refs (an opaque token from
+   * {@link CustomStyleDetail.refs} — kept) or a `data:` image URL (added). An
+   * entry that is neither is rejected, and the list may not be empty: a custom
+   * style is derived from images, so it keeps at least one. Omitted = keep the
+   * current list.
+   */
+  refs?: string[];
+  /** Replacement picker preview as a data: URL. Omitted = keep the current one. */
+  thumbnail?: string;
 }
